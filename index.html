@@ -1,0 +1,2079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AF KB Auditor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; color: #1d1d1f; min-height: 100vh; }
+
+    header {
+      background: #1d1d1f; color: #fff;
+      padding: 18px 32px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .af-logo { font-size: 21px; font-weight: 800; color: #00b2ff; letter-spacing: -0.5px; }
+    header h1 { font-size: 16px; font-weight: 500; color: #ccc; }
+    .header-actions { display: flex; gap: 8px; }
+
+    .btn {
+      padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: none; white-space: nowrap; transition: all 0.12s;
+    }
+    .btn-primary { background: #0071e3; color: #fff; }
+    .btn-primary:hover { background: #005bbf; }
+    .btn-primary:disabled { background: #555; color: #888; cursor: default; }
+    .btn-ghost { background: transparent; color: #aaa; border: 1.5px solid #444; }
+    .btn-ghost:hover { border-color: #888; color: #fff; }
+    .btn-ghost:disabled { opacity: 0.4; cursor: default; }
+    .btn-light { background: #fff; color: #333; border: 1.5px solid #d0d0d5; }
+    .btn-light:hover { border-color: #0071e3; color: #0071e3; }
+    .btn-sm { padding: 6px 13px; font-size: 12px; }
+
+    /* Mode bar */
+    .mode-bar {
+      background: #fff; border-bottom: 1.5px solid #e0e0e5;
+      padding: 0 32px; display: flex; gap: 0;
+    }
+    .mode-tab {
+      padding: 14px 20px; font-size: 13px; font-weight: 500; color: #888;
+      cursor: pointer; border-bottom: 2.5px solid transparent;
+      margin-bottom: -1.5px; transition: all 0.15s; user-select: none;
+    }
+    .mode-tab:hover { color: #444; }
+    .mode-tab.active { color: #0071e3; border-bottom-color: #0071e3; }
+
+    .mode-panel { display: none; }
+    .mode-panel.active { display: block; }
+    .panel-body { padding: 24px 32px; }
+
+    /* Scan panel */
+    .scan-intro { max-width: 640px; margin-bottom: 22px; }
+    .scan-intro h2 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .scan-intro p { font-size: 13px; color: #666; line-height: 1.5; }
+
+    .scan-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+
+    .progress-card {
+      background: #fff; border: 1.5px solid #e0e0e5; border-radius: 12px;
+      padding: 16px 20px; max-width: 640px; display: none; margin-bottom: 20px;
+    }
+    .progress-card.visible { display: block; }
+    .progress-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .progress-title { font-size: 13px; font-weight: 600; }
+    .progress-pct { font-size: 13px; font-weight: 700; color: #0071e3; }
+    .progress-bar-bg { height: 8px; background: #e8e8ed; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+    .progress-bar-fill { height: 100%; background: #0071e3; border-radius: 4px; width: 0%; transition: width 0.4s ease; }
+    .progress-sub { font-size: 12px; color: #888; display: flex; justify-content: space-between; }
+
+    /* Section label */
+    .section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #999; margin-bottom: 10px; }
+
+    /* Search input */
+    .search-row { display: flex; gap: 8px; max-width: 640px; margin-bottom: 12px; }
+    .search-input {
+      flex: 1; padding: 11px 15px; border: 1.5px solid #d0d0d5; border-radius: 9px;
+      font-size: 14px; outline: none; background: #fff; transition: border-color 0.15s;
+    }
+    .search-input:focus { border-color: #0071e3; }
+
+    /* Flag terms */
+    .flag-panel { max-width: 640px; background: #fff; border: 1.5px solid #e0e0e5; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .flag-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 13px; font-weight: 500; color: #444; }
+    .flag-panel-header:hover { background: #fafafa; }
+    .flag-panel-body { padding: 12px 14px; border-top: 1px solid #f0f0f5; display: none; }
+    .flag-panel-body.open { display: block; }
+    .flag-input-row { display: flex; gap: 8px; }
+    .flag-input { flex: 1; padding: 7px 12px; border: 1.5px solid #d0d0d5; border-radius: 7px; font-size: 13px; outline: none; }
+    .flag-input:focus { border-color: #0071e3; }
+    .flag-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .flag-tag { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: #fff3cd; color: #7a5c00; border: 1px solid #f5c842; font-size: 12px; font-family: monospace; }
+    .flag-tag-remove { cursor: pointer; font-size: 14px; opacity: 0.6; }
+    .flag-tag-remove:hover { opacity: 1; }
+    .presets-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+    .presets-label { font-size: 11px; color: #aaa; font-weight: 500; }
+    .preset-chip { padding: 4px 11px; border-radius: 999px; border: 1.5px solid #e0e0e5; background: #fafafa; font-size: 11px; cursor: pointer; color: #555; transition: all 0.12s; }
+    .preset-chip:hover { border-color: #0071e3; color: #0071e3; background: #e8f1fd; }
+
+    /* Status */
+    .status-bar { padding: 10px 32px; font-size: 13px; color: #666; display: flex; align-items: center; gap: 10px; min-height: 40px; }
+    .spinner { width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #0071e3; border-radius: 50%; animation: spin 0.7s linear infinite; display: none; flex-shrink: 0; }
+    .spinner.active { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Summary */
+    .summary-bar { padding: 0 32px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+    .summary-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+    .pill.total  { background: #e0e0e5; color: #333; }
+    .pill.issues { background: #ffeaea; color: #c0392b; }
+    .pill.clean  { background: #e8f8ec; color: #217a3b; }
+    .pill.warn   { background: #fff3cd; color: #7a5c00; }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .pill.total .dot  { background: #888; }
+    .pill.issues .dot { background: #c0392b; }
+    .pill.clean .dot  { background: #34c759; }
+    .pill.warn .dot   { background: #f59e0b; }
+
+    .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-btn { padding: 5px 12px; border-radius: 6px; border: 1.5px solid #d0d0d5; background: #fff; font-size: 12px; cursor: pointer; transition: all 0.12s; }
+    .filter-btn.active { border-color: #0071e3; color: #0071e3; background: #e8f1fd; }
+
+    /* Load more bar */
+    .load-more-bar { padding: 0 32px 16px; display: flex; align-items: center; gap: 12px; }
+    .load-more-bar span { font-size: 12px; color: #888; }
+
+    /* Table */
+    .table-wrap { padding: 0 32px 48px; overflow-x: auto; }
+    .empty-state { text-align: center; padding: 56px 32px; color: #ccc; }
+    .empty-state .icon { font-size: 36px; margin-bottom: 10px; }
+    .empty-state p { font-size: 14px; }
+
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+    thead tr { background: #f0f0f5; }
+    th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #666; white-space: nowrap; }
+    td { padding: 12px 14px; font-size: 13px; border-top: 1px solid #f0f0f5; vertical-align: top; }
+    tr:hover td { background: #fafafa; }
+    tr.hidden { display: none; }
+
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .badge.high   { background: #ffeaea; color: #c0392b; }
+    .badge.medium { background: #fff3cd; color: #7a5c00; }
+    .badge.low    { background: #f0f0f5; color: #666; }
+
+    .art-title { font-weight: 500; max-width: 220px; line-height: 1.4; }
+    .art-url a { color: #0071e3; text-decoration: none; font-size: 12px; }
+    .art-url a:hover { text-decoration: underline; }
+
+    .misspelled .wrong { font-family: monospace; text-decoration: line-through; color: #c0392b; font-size: 13px; }
+    .misspelled .arrow { color: #bbb; margin: 0 5px; }
+    .misspelled .right { font-family: monospace; color: #217a3b; font-weight: 700; font-size: 13px; }
+
+    .context-cell { font-size: 12px; color: #555; line-height: 1.55; max-width: 340px; }
+    .context-cell mark { background: #fff3cd; border-radius: 2px; padding: 0 2px; }
+
+    .matched-tags { display: flex; flex-wrap: wrap; gap: 4px; max-width: 200px; }
+    .matched-tag { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-family: monospace; background: #fff3cd; color: #7a5c00; }
+
+    .excerpt { font-size: 12px; color: #555; line-height: 1.55; max-width: 300px; }
+    .excerpt mark { background: #fff3cd; padding: 0 2px; border-radius: 2px; }
+
+    .section-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #f0f0f5; color: #555; font-size: 11px; }
+
+    /* Link checker status badges */
+    .badge.ok           { background: #e8f8ec; color: #217a3b; }
+    .badge.broken       { background: #ffeaea; color: #c0392b; }
+    .badge.redirect     { background: #fff3cd; color: #7a5c00; }
+    .badge.unverifiable { background: #f0f0f5; color: #555; }
+    .badge.neterror     { background: #fff0e8; color: #b03a00; }
+    .badge.timeout      { background: #fff0e8; color: #b03a00; }
+
+    /* Link checker table cells */
+    .link-url-cell { font-size: 12px; word-break: break-all; max-width: 300px; }
+    .link-url-cell a { color: #0071e3; text-decoration: none; }
+    .link-url-cell a:hover { text-decoration: underline; }
+    .link-text-cell { font-size: 12px; color: #555; max-width: 160px; word-break: break-word; }
+
+    /* Spell check action column */
+    th:last-child, td:last-child { white-space: nowrap; width: 1%; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <span class="af-logo">AF</span>
+    <h1>KB Auditor</h1>
+  </div>
+  <div class="header-actions">
+    <!-- hidden exportBtn kept for keyword/search CSV compat -->
+    <button id="exportBtn" onclick="exportCSV()" style="display:none"></button>
+  </div>
+</header>
+
+<div class="mode-bar">
+  <div class="mode-tab active" onclick="setMode('spell',this)" title="Scan all published KB articles for spelling mistakes using LanguageTool">🔤 Spell Check</div>
+  <div class="mode-tab" onclick="setMode('keyword',this)" title="Search for articles containing specific keywords, with optional risk-flagging for sensitive terms">🏷️ Keyword Finder</div>
+  <div class="mode-tab" onclick="setMode('search',this)" title="Full-text search across the AppsFlyer Knowledge Base">🔍 Search</div>
+  <div class="mode-tab" onclick="setMode('dict',this)" title="Manage your custom word list — words here are silently skipped during spell checking">📖 Dictionary</div>
+  <div class="mode-tab" onclick="setMode('link',this)" title="Scan all articles for broken, redirected, or unverifiable hyperlinks">🔗 Link Checker</div>
+</div>
+
+<!-- ═══ SPELL CHECK ═══ -->
+<div class="mode-panel active" id="panel-spell">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>Scan entire Knowledge Base for spelling mistakes</h2>
+      <p>Fetches every published English article from the AppsFlyer Help Center and checks spelling using <a href="https://languagetool.org" target="_blank" style="color:#0071e3;">LanguageTool</a> — runs entirely in your browser with no external setup needed. AppsFlyer product names, acronyms, and technical terms are automatically ignored.</p>
+      <p style="margin-top:8px; font-size:12px; color:#999;">Scans all published English articles (~730). Estimated time: 4–5 minutes for the full KB.</p>
+    </div>
+
+    <div class="scan-controls">
+      <button class="btn btn-primary" id="spellRunBtn" onclick="runFullScan()" title="Fetch all published English articles from the Help Center and run them through LanguageTool — takes 4–5 minutes for the full KB">▶ Scan Whole KB</button>
+      <button class="btn btn-light btn-sm" id="spellStopBtn" onclick="stopScan()" style="display:none" title="Stop the scan after the current article finishes — results so far are kept">■ Stop</button>
+      <button class="btn btn-light btn-sm" id="loadCacheBtn" onclick="loadCachedScan()" style="display:none" title="Reload the results from your last completed scan — much faster than re-scanning">📂 Load Last Scan (<span id="cacheDateLabel"></span>)</button>
+      <button class="btn btn-light btn-sm" id="refreshResultsBtn" onclick="refreshSpellResults()" style="display:none" title="Re-filter the current results against your updated dictionary — removes words you've added since the scan, no need to re-scan">↻ Refresh Results</button>
+      <button class="btn btn-light btn-sm" id="shareExportBtn" onclick="exportResultsJSON()" style="display:none" title="Export results as a JSON file — use this if you want to import them back later or share with a teammate">⬆ Export JSON</button>
+      <button class="btn btn-light btn-sm" id="spellCsvBtn" onclick="exportCSV()" style="display:none" title="Download results as a CSV file you can open in Excel or Google Sheets">⬇ Export CSV</button>
+      <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a JSON file exported via 'Export JSON' — dictionary is applied automatically">⬇ Import JSON<input type="file" accept=".json" onchange="importResultsJSON(event)" style="display:none"/></label>
+      <span id="spellIdleNote" style="font-size:12px;color:#aaa">Scans all published articles — no setup needed.</span>
+    </div>
+
+    <div class="progress-card" id="progressCard">
+      <div class="progress-top">
+        <span class="progress-title" id="progressTitle">Fetching articles…</span>
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+      <div class="progress-sub">
+        <span id="progressSub">Starting…</span>
+        <span id="progressCount"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ KEYWORD FINDER ═══ -->
+<div class="mode-panel" id="panel-keyword">
+  <div class="panel-body">
+    <div class="section-label">Search query</div>
+    <div class="search-row">
+      <input class="search-input" id="kwInput" type="text"
+        placeholder="Search the KB…"
+        onkeydown="if(event.key==='Enter') runKeywordSearch()"/>
+      <button class="btn btn-primary" onclick="runKeywordSearch()" title="Search for articles containing this term — results are ranked by risk based on your flagged terms">Search</button>
+    </div>
+
+    <div class="flag-panel">
+      <div class="flag-panel-header" onclick="toggleFlagPanel()">
+        <span>⚑ &nbsp;Flag terms <span id="flagCount" style="color:#f59e0b;font-weight:700"></span></span>
+        <span id="flagChevron" style="font-size:11px;color:#aaa">▼ expand</span>
+      </div>
+      <div class="flag-panel-body" id="flagPanelBody">
+        <p style="font-size:12px;color:#888;margin-bottom:10px;">Articles containing these terms will be highlighted.</p>
+        <div class="flag-input-row">
+          <input class="flag-input" id="flagInput" type="text" placeholder="e.g. probabilistic modeling"
+            onkeydown="if(event.key==='Enter') addFlagTerm()"/>
+          <button class="btn btn-primary btn-sm" onclick="addFlagTerm()" title="Add this term to your flag list — any article containing it will be highlighted in results">Add</button>
+        </div>
+        <div class="flag-tags" id="flagTagsContainer"></div>
+        <div class="presets-row">
+          <span class="presets-label">Presets:</span>
+          <span class="preset-chip" onclick="addFlagPreset('probabilistic modeling')" title="Flag articles mentioning probabilistic modeling — a privacy-sensitive attribution method">probabilistic modeling</span>
+          <span class="preset-chip" onclick="addFlagPreset('device fingerprint')" title="Flag articles mentioning device fingerprinting — restricted under Apple's ATT policy">device fingerprint</span>
+          <span class="preset-chip" onclick="addFlagPreset('IDFA')" title="Flag articles mentioning Apple's Identifier for Advertisers — usage is restricted post-iOS 14.5">IDFA</span>
+          <span class="preset-chip" onclick="addFlagPreset('IDFV')" title="Flag articles mentioning Apple's Identifier for Vendors">IDFV</span>
+          <span class="preset-chip" onclick="addFlagPreset('pmod')" title="Flag articles mentioning pmod — shorthand for probabilistic modeling">pmod</span>
+          <span class="preset-chip" onclick="addFlagPreset('IP address attribution')" title="Flag articles mentioning IP-based attribution — a privacy-sensitive method">IP address attribution</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ SEARCH ═══ -->
+<div class="mode-panel" id="panel-search">
+  <div class="panel-body">
+    <div class="section-label">Search the knowledge base</div>
+    <div class="search-row">
+      <input class="search-input" id="srchInput" type="text"
+        placeholder="Search the AppsFlyer Knowledge Base…"
+        onkeydown="if(event.key==='Enter') runSearch()"/>
+      <button class="btn btn-primary" onclick="runSearch()" title="Search all published KB articles by title and content — returns the top matching articles ranked by relevance">Search</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DICTIONARY ═══ -->
+<div class="mode-panel" id="panel-dict">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>Custom Dictionary</h2>
+      <p>Words listed here are ignored during spell checking. The built-in list covers AppsFlyer products, acronyms, and common tech terms. Add any additional words your team uses — they'll be saved in your browser and persist between sessions.</p>
+    </div>
+
+    <div style="max-width:680px;">
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <input class="search-input" id="dictInput" type="text" placeholder="Add a word to ignore (e.g. lookback, ssot, amazondsp)…"
+          onkeydown="if(event.key==='Enter') addDictWord()"/>
+        <button class="btn btn-primary" onclick="addDictWord()" title="Add this word to your personal dictionary — it will be ignored in all future spell checks">Add</button>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div id="dictWordCount" style="font-size:12px;color:#888;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-light btn-sm" onclick="exportDictionary()" title="Save your custom words as a .txt file to share with teammates">⬆ Share word list</button>
+          <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a word list shared by a teammate">⬇ Import word list<input type="file" accept=".txt,.json" onchange="importDictionary(event)" style="display:none"/></label>
+          <button class="btn btn-light btn-sm" onclick="toggleDictSection('builtin')" title="Toggle the list of built-in ignored words — these cover AppsFlyer products, acronyms, and common tech terms, and can't be removed">Show/hide built-in words</button>
+          <button class="btn btn-light btn-sm" onclick="clearCustomDictionary()" style="color:#c0392b;border-color:#e8b4b8;" title="Remove all your custom words from the dictionary — built-in words are unaffected">🗑 Clear custom words</button>
+        </div>
+      </div>
+
+      <div id="dictCustomSection">
+        <div class="section-label" style="margin-bottom:8px;">Your words (<span id="dictCustomCount">0</span>) <span style="font-size:11px;color:#aaa;font-weight:400">— saved in this browser, persist between sessions</span></div>
+        <div id="dictCustomTags" class="flag-tags" style="margin-bottom:16px;">
+          <span style="font-size:12px;color:#aaa;font-style:italic;">No custom words yet.</span>
+        </div>
+      </div>
+
+      <div id="dictBuiltinSection" style="display:none;">
+        <div class="section-label" style="margin-bottom:8px;">Built-in ignored words (<span id="dictBuiltinCount">0</span>) <span style="font-size:11px;color:#aaa;font-weight:400">— always present, can't be removed here</span></div>
+        <div id="dictBuiltinTags" class="flag-tags"></div>
+      </div>
+
+      <div style="margin-top:20px; padding:12px 14px; background:#f9f9fb; border-radius:8px; border:1px solid #e8e8ed; font-size:12px; color:#666; line-height:1.6;">
+        <strong style="color:#444;">Want a word added for everyone?</strong><br>
+        Custom words only apply to your browser. To get a word added to the built-in list (so it's there by default for the whole team), just collect the words you want standardised and ask to update the tool — it's a quick change.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LINK CHECKER ═══ -->
+<div class="mode-panel" id="panel-link">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>Scan for broken and redirected links</h2>
+      <p>Fetches every published article from the AppsFlyer Help Center, extracts every hyperlink, then checks each URL — flagging broken links (404/5xx), redirects (3xx), network errors, and links that could not be verified due to browser security restrictions (CORS). Runs entirely in your browser.</p>
+      <p style="margin-top:8px; font-size:12px; color:#999;">Checks all unique URLs across all articles. Time depends on the number of unique links — typically 10–20 min for a full KB scan. Results are cached so you don't need to re-run every session.</p>
+    </div>
+
+    <!-- CORS proxy option -->
+    <div style="max-width:640px; margin-bottom:16px; padding:14px 16px; background:#fff; border:1.5px solid #e0e0e5; border-radius:10px;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="useCorsProxy" style="width:15px;height:15px;margin-top:2px;flex-shrink:0;cursor:pointer;" checked>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#1d1d1f;margin-bottom:3px;">Use CORS proxy for external links <span style="font-weight:400;color:#34c759;font-size:12px;">✓ Recommended</span></div>
+          <div style="font-size:12px;color:#666;line-height:1.5;">
+            Browsers block reading status codes from most external URLs (a security rule called CORS). Without a proxy, ~90% of results show as "Unverifiable."
+            Enabling this routes each URL through <strong>corsproxy.io</strong> — a free, open-source proxy — so real status codes are returned.
+            <span style="color:#999;">Internal AppsFlyer and Zendesk links are always checked directly.</span>
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <div class="scan-controls">
+      <button class="btn btn-primary" id="linkRunBtn" onclick="runLinkScan()" title="Fetch all published articles, extract every hyperlink, then check each URL for broken pages, redirects, and timeouts — typically takes 10–20 minutes">▶ Scan for Broken Links</button>
+      <button class="btn btn-light btn-sm" id="linkStopBtnEl" onclick="stopLinkScan()" style="display:none" title="Stop the link scan after the current batch — results checked so far are kept">■ Stop</button>
+      <button class="btn btn-light btn-sm" id="loadLinkCacheBtn" onclick="loadCachedLinks()" style="display:none" title="Reload the results from your last completed link scan — much faster than re-scanning">📂 Load Last Scan (<span id="linkCacheDateLabel"></span>)</button>
+      <button class="btn btn-light btn-sm" id="linkShareBtn" onclick="exportLinkJSON()" style="display:none" title="Export results as a JSON file — use this if you want to import them back later or share with a teammate">⬆ Export JSON</button>
+      <button class="btn btn-light btn-sm" id="linkCsvBtn" onclick="exportCSV()" style="display:none" title="Download results as a CSV file you can open in Excel or Google Sheets">⬇ Export CSV</button>
+      <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a JSON file exported via 'Export JSON' — restores a full scan without re-running">⬇ Import JSON<input type="file" accept=".json" onchange="importLinkJSON(event)" style="display:none"/></label>
+      <span id="linkIdleNote" style="font-size:12px;color:#aaa">Scans all published articles — no setup needed.</span>
+    </div>
+
+    <!-- Proxy status (shown after scan starts and proxy is tested) -->
+    <div id="proxyStatusBar" style="display:none; max-width:640px; margin-top:8px; padding:9px 14px; border-radius:8px; font-size:12px; line-height:1.5;"></div>
+
+    <div class="progress-card" id="linkProgressCard">
+      <div class="progress-top">
+        <span class="progress-title" id="linkProgressTitle">Starting…</span>
+        <span class="progress-pct" id="linkProgressPct">0%</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="linkProgressFill"></div></div>
+      <div class="progress-sub">
+        <span id="linkProgressSub"></span>
+        <span id="linkProgressCount"></span>
+      </div>
+    </div>
+
+    <div style="margin-top:4px; max-width:640px; padding:12px 14px; background:#f9f9fb; border-radius:8px; border:1px solid #e8e8ed; font-size:12px; color:#666; line-height:1.6; display:none;" id="linkLegend">
+      <strong style="color:#444;">Status key:</strong>
+      &nbsp;<span class="badge broken" style="font-size:11px">❌ Broken</span> — 404, 410, 5xx, or DNS failure &nbsp;
+      <span class="badge redirect" style="font-size:11px">↪️ Redirect</span> — 301/302, URL may need updating &nbsp;
+      <span class="badge unverifiable" style="font-size:11px">⚠️ Unverifiable</span> — server responded but browser can't read status (CORS) &nbsp;
+      <span class="badge timeout" style="font-size:11px">⏱️ Timeout</span> — no response within 12 s
+    </div>
+  </div>
+</div>
+
+<!-- ── Status ── -->
+<div class="status-bar">
+  <div class="spinner" id="spinner"></div>
+  <span id="statusText">Select a mode above to get started.</span>
+</div>
+
+<!-- ── Summary + filters ── -->
+<div id="summaryBar" class="summary-bar" style="display:none">
+  <div class="summary-pills" id="summaryPills"></div>
+  <div class="filter-bar" id="filterBar"></div>
+</div>
+
+<!-- ── Load more bar ── -->
+<div class="load-more-bar" id="loadMoreBar" style="display:none">
+  <button class="btn btn-light btn-sm" id="loadMoreBtn" onclick="loadMoreResults()" title="Load the next 25 results from the API">Load 25 more</button>
+  <button class="btn btn-primary btn-sm" id="loadAllBtn" onclick="loadAllResults()" title="Fetch all remaining results at once — may take a moment for large result sets">Load all</button>
+  <span id="loadMoreStatus"></span>
+</div>
+
+<!-- ── Results ── -->
+<div class="table-wrap">
+  <div class="empty-state" id="emptyState">
+    <div class="icon">🔍</div>
+    <p id="emptyMsg">Results will appear here.</p>
+  </div>
+  <table id="resultsTable" style="display:none">
+    <thead><tr id="tableHead"></tr></thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<script>
+// ── Config ─────────────────────────────────────────────────────────────────
+const LANGUAGETOOL_URL = "https://api.languagetool.org/v2/check";
+const LT_DELAY_MS      = 300;   // ms between article requests (rate-limit safe)
+const ZENDESK_ARTICLES = "https://appsflyer.zendesk.com/api/v2/help_center/en-us/articles.json";
+const ZENDESK_SEARCH   = "https://appsflyer.zendesk.com/api/v2/help_center/articles/search.json";
+
+// Built-in words that are intentional in AppsFlyer docs — not spelling mistakes
+const BUILTIN_IGNORED = [
+  // AppsFlyer products & terms
+  "appsflyer","onelink","skan","skadnetwork","protect360","audiences","datalocker",
+  "xpend","roi360","postback","deeplink","deeplinking","reattribution","reattribute",
+  "retargeting","deduplication","fingerprinting","probabilistic","deterministic",
+  "viewthrough","clickthrough","clickid","reengagement","pba","mmp","ctit","ttp",
+  // Common tech jargon
+  "api","sdk","url","html","css","json","xml","csv","ios","macos","android",
+  "oauth","jwt","saml","sso","gdpr","ccpa","idfa","idfv","att","uuid","regex",
+  "webhook","webhooks","backend","frontend","middleware","microservices","iframe",
+  "iframes","javascript","subdomain","subdomains","hostname","hardcoded","hardcode",
+  "signin","signup","signout","whitelist","blacklist","blocklist","allowlist",
+  "endpoint","endpoints","metadata","dataset","datasets","postinstall","lifecycle",
+  "plugin","plugins","addon","addons","callout","callouts","tooltip","tooltips",
+  "flyout","fallback","fallbacks","prefill","placeholder","placeholders",
+  "dropdown","checkbox","checkboxes","subcategory","timestamp","timestamps",
+  "onboarding","walkthrough","workaround","lookup","trackable","trackables",
+  "unmapped","uninstall","uninstalls","utm","prebuilt","prebuild",
+  // Metrics & abbreviations
+  "ctr","cvr","cpi","cpa","cpc","cpm","roas","ltv","dau","mau","arpu","arppu",
+  "arpdau","kpi","kpis","ecpm","vtr","vcr","grp","erpm",
+  // Partner / brand names (lowercase)
+  "ironsource","applovin","mintegral","vungle","inmobi","moloco","tiktok",
+  "snapchat","meta","google","adjust","branch","kochava","clevertap",
+  // AWS / cloud terms seen in KB
+  "arn","aws","iam","kms","s3","ec2","gcs","azure","bigquery",
+  // Common code keywords / identifiers
+  "int","srn","pid","param","ssot","unix","concat","awk","null","bool",
+  "lookback","amazondsp","amazondsp","amazon","envtype","mybucket",
+  "affparams","defaultvalue","loaderscript","crossorigin","baseurl","webappid",
+  "showbanner","getobject","listbucket","deleteobject","putobject",
+  // Other common tech words
+  "username","usernames","programmatic","configurator","integrations",
+  "boolean","varchar","substring","preload","preloaded","autofill","autofilled",
+  "changelog","changelogs","codebase","codebases","repo","repos","refactor",
+  "adblocker","adblockers","adset","adsets","adgroup","adgroups",
+  "hashtag","hashtags","geo","geos","monetization","monetize","monetized",
+  "xsolla","ssai","mraid","skan","coppa","vpaid","vast","ima","wv",
+  "okta","ldap","saml","scim","idp","mfa","totp","otp","rbac",
+  "firehose","kinesis","pubsub","kafka","bigquery","snowflake","redshift",
+  "databricks","looker","tableau","grafana","datadog","splunk",
+  "cors","csrf","xss","jwt","tls","ssl","dns","tcp","udp","http","https","ftp",
+  // Partner networks, ad platforms, DSPs, and SDK identifiers (team dictionary)
+  "aarki","adamobi","adcash","adform","adikteev","adjoe","admile","admob","admost",
+  "admuxer","adonco","adquant","adrev","ads","adsgalaxy","adshow","advertiserid",
+  "affise","affle","almedia","apk","appcharge","appgrowth","appid","appier","applabs",
+  "appluton","appnext","appodeal","apprainbow","appsmob","ars","avazu","awin",
+  "baitong","baiyi","beintoo","betop","bidalgo","bidease","bidswave","bigabid","bigo",
+  "bingsearch","bitcode","blackbox","bloomreach","blueshift","brandscale","buzzvil",
+  "campuuid","chameleostudios","chartboost","churney","cids","clickzoot","clientid",
+  "cocoapods","cohorted","conf","contentful","convertro","criteo","cuids","daangn",
+  "dataseat","datawave","dcm","dealsnprice","denylist","denylisted","denylists",
+  "dexguard","dfa","digitalturbine","dlab","doubleclick","ecomonline","emarsys",
+  "epicid","etusdigital","eulerian","events","evorra","exmox","facebook","fiksu",
+  "filexmedia","foregon","freecash","ftd","funnetads","fyber","gaids","galaxyx",
+  "gameappzone","gamelight","gapps","gemini","glispa","googleads","gradle","greedygame",
+  "happimobi","hotstar","huawei","hubscale","iaes","ibotta","idfas","inflecto",
+  "inmobidsp","ipinyou","irismedia","jampp","kahuna","kashkick","kayzen","kenshoo",
+  "kuaishou","kwai","lambadapp","lanpan","lead","leadbolt","leadidadmonster","leanplum",
+  "lifestreet","ligatus","linkedin","localytics","loookback","mapendo","mdsp",
+  "medialyzer","meiyou","melodong","microsoft","miramedia","mistplay","mixpanel",
+  "mobio","mobrain","mobrand","mobusi","mobvista","mpnd","msla","muvmobile","myapp",
+  "myappfree","nativex","netease","nexamob","nftdroper","nintendo","nsofmedia","num",
+  "offerslook","onedigitalturbine","onetagid","outbrain","paidsearch","paidsocial",
+  "paramname","params","performadlive","personalyrtb","pinterest","pitatroas","playgap",
+  "playstation","ppc","protonads","prt","psid","qutoutiao","rdt","rebornads","reddit",
+  "remerge","responsys","revx","rockerbox","rocketbox","rocketfuel","roku","rokuads",
+  "rtbhouse","runfuns","samsung","samsungdsp","scmobi","secretkey","sent","seo","setup",
+  "shalltry","shareit","simeji","siteid","sizmek","skad","smadex","sohu","sojern",
+  "spoteffect","spoteffects","springrain","steamid","stringified","subsite","subsiteid",
+  "surgex","swrve","taboola","tabs","tapcart","tapdaq","tapjoy","taptapgame","taptica",
+  "targetmedia","tealium","thepurpleline","tid","tifa","tiktokglobal","tizen","topon",
+  "toutiao","trackier","trademob","transsion","truemoney","tvsquared","tyrads","tyroo",
+  "unityads","venedash","vida","vidaa","vidaaid","voluum","vserv","wakeapp","webpals",
+  "wechat","winclap","xbox","xcframework","xcprivacy","xgraded","xiaomipai","xinlan",
+  "xplatform","yahoogemini","yahoojapan","yandex","yandexdirect","yeahmobi","yjsearch",
+  "youappi","youdao","youlan","yunshu","zenna","zhihu","zoyo"
+];
+
+// Merge built-in with any user-saved custom words from localStorage
+function buildIgnoreSet() {
+  const custom = loadCustomWords();
+  return new Set([...BUILTIN_IGNORED, ...custom].map(w => w.toLowerCase()));
+}
+let IGNORED_WORDS = buildIgnoreSet();
+
+// ── State ──────────────────────────────────────────────────────────────────
+let currentMode      = "spell";
+let isRunning        = false;
+let stopFlag         = false;
+let spellResults     = [];
+let spellCheckedCount = 0;   // articles checked so far (for summary restore)
+let kwResults        = [];
+let srchResults      = [];
+let flagTerms        = [];
+let linkResults      = [];   // link checker results (non-OK rows)
+let linkCheckedCount = 0;    // unique URLs checked
+let isLinkRunning    = false;
+let linkStopFlag     = false;
+
+// Pagination state for search / keyword
+let paginationState = { query: "", page: 1, pageCount: 1, mode: "" };
+
+// ── helpers to show/hide per-panel CSV buttons ─────────────────────────────
+function setSpellCsvBtn(on) {
+  const b = document.getElementById("spellCsvBtn");
+  if (b) b.style.display = on ? "inline-block" : "none";
+}
+function setLinkCsvBtn(on) {
+  const b = document.getElementById("linkCsvBtn");
+  if (b) b.style.display = on ? "inline-block" : "none";
+}
+
+// ── Mode switching ─────────────────────────────────────────────────────────
+function setMode(mode, tab) {
+  currentMode = mode;
+  document.querySelectorAll(".mode-tab").forEach(t => t.classList.remove("active"));
+  tab.classList.add("active");
+  document.querySelectorAll(".mode-panel").forEach(p => p.classList.remove("active"));
+  document.getElementById("panel-" + mode).classList.add("active");
+
+  if (mode === "dict") {
+    renderDictPanel();
+    setStatus("Manage your custom ignore list here.");
+  } else if (mode === "spell" && (spellResults.length > 0 || isRunning)) {
+    // Re-render accumulated spell results so they aren't lost after tab switching
+    resetResults();
+    setSpellHeaders();
+    spellResults.forEach(m => appendSpellRow(m));
+    if (!isRunning) {
+      renderSpellSummary(spellCheckedCount, spellResults.length, 0);
+      const hasResults = spellResults.length > 0;
+      setSpellCsvBtn(hasResults);
+      document.getElementById("shareExportBtn").style.display    = hasResults ? "inline-block" : "none";
+      document.getElementById("refreshResultsBtn").style.display  = hasResults ? "inline-block" : "none";
+      setStatus(`Scan complete. Checked ${spellCheckedCount} articles, found ${spellResults.length} potential spelling issue${spellResults.length !== 1 ? "s" : ""}.`);
+    } else {
+      setStatus(`Scanning… ${spellResults.length} issue${spellResults.length !== 1 ? "s" : ""} found so far.`);
+    }
+  } else if (mode === "link" && (linkResults.length > 0 || isLinkRunning)) {
+    // Re-render accumulated link results — include unverifiable (may contain WIPs)
+    resetResults();
+    unverifShown = true;
+    setLinkHeaders();
+    linkResults.forEach(r => appendLinkRow(r));
+    if (!isLinkRunning) {
+      const broken    = linkResults.filter(r => r.status === "broken" || r.status === "neterror").length;
+      const redirects = linkResults.filter(r => r.status === "redirect").length;
+      const unverif   = linkResults.filter(r => r.status === "unverifiable").length;
+      const errs      = linkResults.filter(r => r.status === "timeout").length;
+      renderLinkSummary(linkCheckedCount, broken, redirects, unverif, errs);
+      const hasResults = linkResults.length > 0;
+      setLinkCsvBtn(hasResults);
+      document.getElementById("linkShareBtn").style.display = hasResults ? "inline-block" : "none";
+      const actionable = broken + redirects + errs;
+      setStatus(`Link scan complete. Checked ${linkCheckedCount} URLs — ${actionable} actionable issue${actionable !== 1 ? "s" : ""}, ${unverif} unverifiable (CORS).`);
+    } else {
+      const actionable = linkResults.filter(r => r.status !== "ok" && r.status !== "unverifiable").length;
+      setStatus(`Checking links… ${actionable} actionable issue${actionable !== 1 ? "s" : ""} so far.`);
+    }
+  } else {
+    resetResults();
+    setStatus("Ready.");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SPELL CHECK — full KB scan
+// ═══════════════════════════════════════════════════════════════════════════
+async function runFullScan() {
+  if (isRunning) return;
+  isRunning = true;
+  stopFlag  = false;
+  spellResults = [];
+  spellCheckedCount = 0;
+
+  document.getElementById("spellRunBtn").disabled = true;
+  document.getElementById("spellStopBtn").style.display = "inline-block";
+  document.getElementById("spellIdleNote").style.display = "none";
+  document.getElementById("exportBtn").disabled = true;
+  document.getElementById("progressCard").classList.add("visible");
+
+  resetResults();
+  setSpellHeaders();
+  setLoading(true);
+  setProgress("Fetching article list…", 0, "", "");
+
+  try {
+    // ── Step 1: fetch all articles from Zendesk ──
+    setStatus("Fetching all articles from Zendesk Help Center…");
+    const allArticles = await fetchAllArticles();
+    if (stopFlag) return finishScan();
+
+    const total = allArticles.length;
+    setStatus(`Found ${total} articles. Starting spell check via LanguageTool…`);
+
+    let checked = 0;
+    let mistakeCount = 0;
+    let errorCount = 0;
+
+    // ── Step 2: check each article with LanguageTool ──
+    for (let i = 0; i < total; i++) {
+      if (stopFlag) break;
+
+      const article = allArticles[i];
+      const pct = Math.round((i / total) * 100);
+
+      setProgress(
+        `Checking article ${i + 1} of ${total}`,
+        pct,
+        article.title || "",
+        `${mistakeCount} mistake${mistakeCount !== 1 ? "s" : ""} found so far${errorCount > 0 ? ` · ⚠️ ${errorCount} errors` : ""}`
+      );
+
+      // Respect rate limit
+      if (i > 0) await new Promise(r => setTimeout(r, LT_DELAY_MS));
+      if (stopFlag) break;
+
+      const cleanBody = cleanArticleBody(article.body || "");
+      const textToCheck = `${article.title || ""}\n\n${cleanBody}`;
+
+      try {
+        const params = new URLSearchParams({
+          language: "en-US",
+          text: textToCheck,
+          enabledCategories: "TYPOS",
+          enabledOnly: "true"
+        });
+
+        const resp = await fetch(LANGUAGETOOL_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString()
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        for (const match of (data.matches || [])) {
+          const word = match.context.text.substring(
+            match.context.offset,
+            match.context.offset + match.context.length
+          );
+          // Skip if in our combined ignore list
+          if (IGNORED_WORDS.has(word.toLowerCase())) continue;
+          // Skip very short tokens
+          if (word.length < 3) continue;
+          // Skip all-uppercase tokens (acronyms like API, SDK, SRN)
+          if (/^[A-Z]{2,}$/.test(word)) continue;
+          // Skip tokens with digits, underscores, or braces (code/IDs)
+          if (/[\d_{}<>&]/.test(word)) continue;
+          // Skip camelCase tokens (variable/method names like loaderScript, webAppId)
+          if (/[a-z][A-Z]/.test(word)) continue;
+          // Skip hyphenated tokens (technical identifiers like af-datalocker, xsolla-billing-payment)
+          if (word.includes("-")) continue;
+          // Skip tokens that look like file paths, URLs, or email fragments
+          if (/[/\\@.]/.test(word)) continue;
+          // Skip tokens that are clearly HTML entity remnants
+          if (word.startsWith("&") || word.endsWith(";")) continue;
+
+          const correction = match.replacements.length > 0 ? match.replacements[0].value : "";
+          if (!correction) continue;
+
+          const mistake = {
+            word,
+            correction,
+            context: match.context.text,
+            article_title: article.title || "",
+            article_url: article.html_url || ""
+          };
+          spellResults.push(mistake);
+          appendSpellRow(mistake);
+          mistakeCount++;
+        }
+        checked++;
+        spellCheckedCount = checked;
+
+      } catch (e) {
+        errorCount++;
+        console.warn(`Article ${i + 1} error:`, e.message);
+        checked++;
+        spellCheckedCount = checked;
+      }
+    }
+
+    const errorNote = errorCount > 0 ? ` (${errorCount} article${errorCount !== 1 ? "s" : ""} could not be checked)` : "";
+    setProgress("Done", 100, "", "");
+    setStatus(`Scan complete. Checked ${checked} articles, found ${mistakeCount} potential spelling issue${mistakeCount !== 1 ? "s" : ""}${errorNote}.`);
+    spellCheckedCount = checked;
+    renderSpellSummary(checked, mistakeCount, errorCount);
+    setSpellCsvBtn(spellResults.length > 0);
+    saveScanCache(spellResults, checked);
+    showShareBtn();
+
+  } catch (e) {
+    setStatus("Error: " + e.message);
+  }
+
+  finishScan();
+}
+
+function finishScan() {
+  isRunning = false;
+  stopFlag  = false;
+  setLoading(false);
+  document.getElementById("spellRunBtn").disabled = false;
+  document.getElementById("spellStopBtn").style.display = "none";
+  document.getElementById("spellIdleNote").style.display = "inline";
+  if (spellResults.length > 0) {
+    document.getElementById("refreshResultsBtn").style.display = "inline-block";
+  }
+}
+
+function refreshSpellResults() {
+  if (!spellResults.length) return;
+
+  // Rebuild the ignore set in case dictionary changed since the scan
+  IGNORED_WORDS = buildIgnoreSet();
+
+  // Filter out any results that are now in the dictionary
+  const filtered = spellResults.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
+  const removed  = spellResults.length - filtered.length;
+
+  // Re-render the table with the filtered list
+  resetResults();
+  setSpellHeaders();
+  filtered.forEach(m => appendSpellRow(m));
+  renderSpellSummary(spellCheckedCount, filtered.length, 0);
+  setSpellCsvBtn(filtered.length > 0);
+  document.getElementById("refreshResultsBtn").style.display = filtered.length > 0 ? "inline-block" : "none";
+
+  if (removed > 0) {
+    setStatus(`Refreshed — removed ${removed} word${removed !== 1 ? "s" : ""} now in your dictionary. ${filtered.length} issue${filtered.length !== 1 ? "s" : ""} remaining.`);
+  } else {
+    setStatus(`Refreshed — no changes. ${filtered.length} issue${filtered.length !== 1 ? "s" : ""} remaining (0 words in dictionary matched).`);
+  }
+}
+
+function stopScan() {
+  stopFlag = true;
+  setStatus("Stopping after current batch…");
+}
+
+// Fetch ALL articles across all pages
+async function fetchAllArticles() {
+  let articles = [];
+  let page = 1;
+  let pageCount = 1;
+
+  do {
+    const url  = `${ZENDESK_ARTICLES}?per_page=100&page=${page}&sort_by=updated_at&sort_order=desc`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Zendesk API error: HTTP ${resp.status}`);
+    const data = await resp.json();
+    articles  = articles.concat(data.articles || []);
+    pageCount = data.page_count || 1;
+    setProgress(`Fetching article list (page ${page} of ${pageCount})…`, 0, "", `${articles.length} articles loaded`);
+    page++;
+  } while (page <= pageCount);
+
+  return articles;
+}
+
+// Strip HTML, decode entities, and clean text for spell checking
+function cleanArticleBody(html) {
+  // Remove script/style/code/pre blocks entirely (don't spell-check code)
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<code[\s\S]*?<\/code>/gi, " ")
+    .replace(/<pre[\s\S]*?<\/pre>/gi, " ");
+  // Strip remaining HTML tags
+  text = text.replace(/<[^>]+>/g, " ");
+  // Decode common HTML entities (these cause false positives like &gt; → AGT)
+  text = text
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&[a-z]{2,8};/gi, " ")   // remaining named entities
+    .replace(/&#\d+;/g, " ");          // numeric entities
+  // Normalize whitespace
+  text = text.replace(/\s+/g, " ").trim();
+  // Truncate to 8000 chars — LanguageTool handles up to 20KB
+  // Trim to last word boundary so we never cut a word in half (which LanguageTool flags as a typo)
+  if (text.length > 8000) {
+    text = text.slice(0, 8000);
+    const lastSpace = text.lastIndexOf(" ");
+    if (lastSpace > 7000) text = text.slice(0, lastSpace);
+  }
+  return text;
+}
+
+// Spell table helpers
+function setSpellHeaders() {
+  document.getElementById("tableHead").innerHTML =
+    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>Action</th>`;
+  document.getElementById("resultsTable").style.display = "";
+  document.getElementById("emptyState").style.display = "none";
+}
+
+function appendSpellRow(m) {
+  const contextHtml = highlightWord(m.context || "", m.word || "");
+  const word = m.word || "";
+  const alreadyIgnored = IGNORED_WORDS.has(word.toLowerCase());
+  const tr = document.createElement("tr");
+  tr.dataset.filter = "issues";
+  tr.dataset.word = word.toLowerCase();
+  tr.innerHTML = `
+    <td class="art-title">${escHtml(m.article_title || "—")}</td>
+    <td class="art-url"><a href="${escHtml(m.article_url || "#")}" target="_blank">↗ Open</a></td>
+    <td><span class="misspelled"><span class="wrong">${escHtml(word)}</span></span></td>
+    <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
+    <td class="context-cell">${contextHtml}</td>
+    <td>${alreadyIgnored
+      ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
+      : `<button class="btn btn-light btn-sm dict-add-btn" onclick="addWordFromSpellRow('${escHtml(word.toLowerCase())}', this)" title="Add '${escHtml(word)}' to your dictionary so it won't show up next time">+ Dictionary</button>`
+    }</td>
+  `;
+  document.getElementById("resultsBody").appendChild(tr);
+}
+
+function addWordFromSpellRow(word, btn) {
+  if (!word) return;
+  const custom = loadCustomWords();
+  if (!custom.includes(word) && !BUILTIN_IGNORED.includes(word)) {
+    custom.push(word);
+    saveCustomWords(custom);
+    IGNORED_WORDS = buildIgnoreSet();
+  }
+  // Update the button in this row to show confirmation
+  btn.outerHTML = `<span style="font-size:11px;color:#34c759;">✓ Added</span>`;
+  // Also update any other rows for the same word
+  document.querySelectorAll(`#resultsBody tr[data-word="${escHtml(word)}"] .dict-add-btn`).forEach(b => {
+    b.outerHTML = `<span style="font-size:11px;color:#34c759;">✓ Added</span>`;
+  });
+  setStatus(`"${word}" added to your dictionary — it won't appear in future scans.`);
+}
+
+function renderSpellSummary(checked, mistakeCount, errorCount) {
+  document.getElementById("summaryBar").style.display = "flex";
+  document.getElementById("summaryPills").innerHTML = `
+    <span class="pill total"><span class="dot"></span>${checked} articles checked</span>
+    ${mistakeCount > 0
+      ? `<span class="pill issues"><span class="dot"></span>${mistakeCount} mistake${mistakeCount !== 1 ? "s" : ""} found</span>`
+      : `<span class="pill clean"><span class="dot"></span>No mistakes found</span>`}
+    ${errorCount > 0
+      ? `<span class="pill warn"><span class="dot"></span>${errorCount} article${errorCount !== 1 ? "s" : ""} could not be checked</span>`
+      : ""}
+  `;
+  document.getElementById("filterBar").innerHTML = "";
+}
+
+function setProgress(title, pct, sub, count) {
+  document.getElementById("progressTitle").textContent = title;
+  document.getElementById("progressPct").textContent   = pct + "%";
+  document.getElementById("progressFill").style.width  = pct + "%";
+  document.getElementById("progressSub").textContent   = sub;
+  document.getElementById("progressCount").textContent = count;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  KEYWORD FINDER
+// ═══════════════════════════════════════════════════════════════════════════
+const HIGH_RISK = ["probabilistic modeling","probabilistic modelling","pmod","device fingerprint","fingerprinting","ip address attribution"];
+const APPLE_SIG = ["apple","ios","iphone","ipad","app store","skadnetwork","att","idfa","idfv"];
+
+function toggleFlagPanel() {
+  const body = document.getElementById("flagPanelBody");
+  const chev = document.getElementById("flagChevron");
+  const open = body.classList.toggle("open");
+  chev.textContent = open ? "▲ collapse" : "▼ expand";
+}
+function addFlagTerm() {
+  const inp  = document.getElementById("flagInput");
+  const term = inp.value.trim().toLowerCase();
+  if (!term || flagTerms.includes(term)) { inp.value = ""; return; }
+  flagTerms.push(term); inp.value = "";
+  renderFlagTags();
+}
+function addFlagPreset(t) {
+  const term = t.toLowerCase();
+  if (!flagTerms.includes(term)) { flagTerms.push(term); renderFlagTags(); }
+}
+function removeFlagTerm(t) {
+  flagTerms = flagTerms.filter(x => x !== t); renderFlagTags();
+}
+function renderFlagTags() {
+  document.getElementById("flagTagsContainer").innerHTML =
+    flagTerms.map(t => `<span class="flag-tag">${escHtml(t)}<span class="flag-tag-remove" onclick="removeFlagTerm('${escHtml(t)}')">×</span></span>`).join("");
+  document.getElementById("flagCount").textContent = flagTerms.length ? `(${flagTerms.length})` : "";
+}
+
+async function runKeywordSearch() {
+  const q = document.getElementById("kwInput").value.trim();
+  if (!q) return;
+  resetResults();
+  paginationState = { query: q, page: 1, pageCount: 1, mode: "keyword" };
+  kwResults = [];
+  setLoading(true);
+  setStatus(`Searching for "${q}"…`);
+
+  await fetchKeywordPage(q, 1, true);
+  setLoading(false);
+}
+
+async function fetchKeywordPage(q, page, first) {
+  const url  = `${ZENDESK_SEARCH}?query=${encodeURIComponent(q)}&per_page=25&page=${page}&locale=en-us`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+
+  paginationState.pageCount = data.page_count || 1;
+  paginationState.page      = page;
+
+  const articles = data.results || [];
+
+  if (first) {
+    setKwHeaders();
+    paginationState.totalCount = data.count || 0;
+  }
+
+  articles.forEach(a => {
+    const text    = ((a.title || "") + " " + stripHtml(a.body || "")).toLowerCase();
+    const matched = flagTerms.filter(t => text.includes(t));
+    const risk    = getRisk(matched, text);
+    kwResults.push({ ...a, matched, risk });
+    appendKwRow(a, matched, risk, q);
+  });
+
+  const showing = kwResults.length;
+  const total   = paginationState.totalCount || 0;
+
+  renderKwSummary(showing, total);
+  updateLoadMoreBar("keyword", showing, total, page, paginationState.pageCount);
+  document.getElementById("exportBtn").disabled = kwResults.length === 0;
+  setStatus(`Showing ${showing} of ${total} results for "${q}".`);
+}
+
+function setKwHeaders() {
+  document.getElementById("tableHead").innerHTML =
+    `<th>Risk</th><th>Article</th><th>URL</th><th>Matched Terms</th><th>Excerpt</th>`;
+  document.getElementById("resultsTable").style.display = "";
+  document.getElementById("emptyState").style.display = "none";
+}
+
+function appendKwRow(a, matched, risk, query) {
+  const body    = stripHtml(a.body || "").slice(0, 800);
+  const excerpt = makeExcerpt(body, [...flagTerms, query]);
+  const tr = document.createElement("tr");
+  tr.dataset.filter = matched.length > 0 ? "flagged" : "clean";
+  tr.innerHTML = `
+    <td>${getRiskBadge(risk)}</td>
+    <td class="art-title">${escHtml(a.title || "—")}</td>
+    <td class="art-url"><a href="${escHtml(a.html_url || "#")}" target="_blank">↗ Open</a></td>
+    <td>${matched.length
+      ? `<div class="matched-tags">${matched.map(t => `<span class="matched-tag">${escHtml(t)}</span>`).join("")}</div>`
+      : `<span style="color:#ccc;font-size:11px">none</span>`}</td>
+    <td class="excerpt">${excerpt}</td>
+  `;
+  document.getElementById("resultsBody").appendChild(tr);
+}
+
+function renderKwSummary(showing, total) {
+  const flagged = kwResults.filter(r => r.matched.length > 0).length;
+  document.getElementById("summaryBar").style.display = "flex";
+  document.getElementById("summaryPills").innerHTML = `
+    <span class="pill total"><span class="dot"></span>${showing}${total > showing ? " of " + total : ""} articles</span>
+    ${flagged > 0 ? `<span class="pill warn"><span class="dot"></span>${flagged} flagged</span>` : ""}
+  `;
+  document.getElementById("filterBar").innerHTML = `
+    <button class="filter-btn active" onclick="filterRows('all',this)">All</button>
+    <button class="filter-btn" onclick="filterRows('flagged',this)">Flagged</button>
+    <button class="filter-btn" onclick="filterRows('clean',this)">Clean</button>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SEARCH
+// ═══════════════════════════════════════════════════════════════════════════
+async function runSearch() {
+  const q = document.getElementById("srchInput").value.trim();
+  if (!q) return;
+  resetResults();
+  paginationState = { query: q, page: 1, pageCount: 1, mode: "search" };
+  srchResults = [];
+  setLoading(true);
+  setStatus(`Searching for "${q}"…`);
+
+  await fetchSearchPage(q, 1, true);
+  setLoading(false);
+}
+
+async function fetchSearchPage(q, page, first) {
+  const url  = `${ZENDESK_SEARCH}?query=${encodeURIComponent(q)}&per_page=25&page=${page}&locale=en-us`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+
+  paginationState.pageCount  = data.page_count || 1;
+  paginationState.page       = page;
+  paginationState.totalCount = data.count || 0;
+
+  const articles = data.results || [];
+
+  if (first) {
+    document.getElementById("tableHead").innerHTML =
+      `<th>#</th><th>Article</th><th>URL</th><th>Excerpt</th>`;
+    document.getElementById("resultsTable").style.display = "";
+    document.getElementById("emptyState").style.display   = "none";
+  }
+
+  articles.forEach((a, idx) => {
+    const body    = stripHtml(a.body || "").slice(0, 600);
+    const excerpt = makeExcerpt(body, [q]);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td style="font-family:monospace;font-size:11px;color:#aaa">${srchResults.length + idx + 1}</td>
+      <td class="art-title">${escHtml(a.title || "—")}</td>
+      <td class="art-url"><a href="${escHtml(a.html_url || "#")}" target="_blank">↗ Open</a></td>
+      <td class="excerpt">${excerpt}</td>
+    `;
+    document.getElementById("resultsBody").appendChild(tr);
+    srchResults.push(a);
+  });
+
+  const total   = paginationState.totalCount;
+  const showing = srchResults.length;
+
+  document.getElementById("summaryBar").style.display = "flex";
+  document.getElementById("summaryPills").innerHTML =
+    `<span class="pill total"><span class="dot"></span>${showing}${total > showing ? " of " + total : ""} results</span>`;
+  document.getElementById("filterBar").innerHTML = "";
+
+  updateLoadMoreBar("search", showing, total, page, paginationState.pageCount);
+  document.getElementById("exportBtn").disabled = srchResults.length === 0;
+  setStatus(`Showing ${showing} of ${total} results.`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LOAD MORE / LOAD ALL
+// ═══════════════════════════════════════════════════════════════════════════
+function updateLoadMoreBar(mode, showing, total, page, pageCount) {
+  const bar = document.getElementById("loadMoreBar");
+  if (showing >= total || page >= pageCount) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  document.getElementById("loadMoreStatus").textContent = `${showing} of ${total} loaded`;
+  document.getElementById("loadMoreBtn").disabled = false;
+  document.getElementById("loadAllBtn").disabled  = false;
+}
+
+async function loadMoreResults() {
+  const { query, page, pageCount, mode } = paginationState;
+  if (page >= pageCount) return;
+
+  document.getElementById("loadMoreBtn").disabled = true;
+  document.getElementById("loadAllBtn").disabled  = true;
+  setLoading(true);
+
+  const nextPage = page + 1;
+  paginationState.page = nextPage;
+
+  if (mode === "keyword") await fetchKeywordPage(query, nextPage, false);
+  else                    await fetchSearchPage(query, nextPage, false);
+
+  setLoading(false);
+}
+
+async function loadAllResults() {
+  document.getElementById("loadMoreBtn").disabled = true;
+  document.getElementById("loadAllBtn").disabled  = true;
+  setLoading(true);
+
+  const { query, pageCount, mode } = paginationState;
+  let p = paginationState.page + 1;
+
+  while (p <= pageCount) {
+    setStatus(`Loading page ${p} of ${pageCount}…`);
+    paginationState.page = p;
+    if (mode === "keyword") await fetchKeywordPage(query, p, false);
+    else                    await fetchSearchPage(query, p, false);
+    p++;
+  }
+
+  setLoading(false);
+  document.getElementById("loadMoreBar").style.display = "none";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+function getRisk(matched, text) {
+  if (!matched.length) return "low";
+  const hr = matched.some(t => HIGH_RISK.some(h => t.includes(h)));
+  const ap = APPLE_SIG.some(s => text.includes(s));
+  if (hr && ap) return "high";
+  return "medium";
+}
+function getRiskBadge(risk) {
+  if (risk === "high")   return `<span class="badge high">🔴 High</span>`;
+  if (risk === "medium") return `<span class="badge medium">🟡 Review</span>`;
+  return `<span class="badge low">— None</span>`;
+}
+function filterRows(type, btn) {
+  document.querySelectorAll("#filterBar .filter-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  document.querySelectorAll("#resultsBody tr").forEach(tr => {
+    if (type === "all") tr.classList.remove("hidden");
+    else tr.classList.toggle("hidden", tr.dataset.filter !== type);
+  });
+}
+
+function escHtml(s) {
+  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function stripHtml(s) {
+  return s.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+}
+function highlightWord(text, word) {
+  if (!word || !text) return escHtml(text);
+  const re = new RegExp("(" + word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ")", "gi");
+  return escHtml(text).replace(re, "<mark>$1</mark>");
+}
+function makeExcerpt(text, terms) {
+  text = text.trim();
+  if (!text) return "";
+  let best = text.slice(0, 200);
+  for (const t of terms) {
+    const idx = text.toLowerCase().indexOf((t || "").toLowerCase());
+    if (idx >= 0) { best = text.slice(Math.max(0, idx - 60), idx + 200); break; }
+  }
+  let esc = escHtml(best + (best.length < text.length ? "…" : ""));
+  terms.forEach(t => {
+    const re = new RegExp("(" + escHtml(t || "").replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ")", "gi");
+    esc = esc.replace(re, "<mark>$1</mark>");
+  });
+  return esc;
+}
+function setLoading(on) {
+  document.getElementById("spinner").className = on ? "spinner active" : "spinner";
+}
+function setStatus(msg) {
+  document.getElementById("statusText").textContent = msg;
+}
+function resetResults() {
+  document.getElementById("resultsBody").innerHTML  = "";
+  document.getElementById("resultsTable").style.display = "none";
+  document.getElementById("emptyState").style.display   = "block";
+  document.getElementById("summaryBar").style.display   = "none";
+  document.getElementById("loadMoreBar").style.display  = "none";
+  document.getElementById("exportBtn").disabled = true;
+}
+
+function clearAll() {
+  resetResults();
+  spellResults     = [];
+  spellCheckedCount = 0;
+  kwResults        = [];
+  srchResults      = [];
+  linkResults      = [];
+  linkCheckedCount = 0;
+  document.getElementById("progressCard").classList.remove("visible");
+  document.getElementById("linkProgressCard").classList.remove("visible");
+  setStatus("Ready.");
+}
+
+// ── Save file helper — uses File System Access API (Chrome/Edge) so the user
+//    picks location + filename; falls back to auto-download in other browsers ─
+async function saveFileAs(blob, suggestedName, description, extensions) {
+  if (window.showSaveFilePicker) {
+    try {
+      const mimeKey = blob.type || "application/octet-stream";
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description, accept: { [mimeKey]: extensions } }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch(e) {
+      if (e.name === "AbortError") return; // user cancelled — do nothing
+      // Any other error: fall through to legacy download below
+    }
+  }
+  // Fallback for Firefox / Safari
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = suggestedName;
+  a.click();
+}
+
+// ── Export CSV ──────────────────────────────────────────────────────────────
+function exportCSV() {
+  let headers = [], rows = [];
+  if (currentMode === "spell") {
+    headers = ["Article Title","Article URL","Misspelled Word","Correction","Context"];
+    rows = spellResults.map(r => [r.article_title, r.article_url, r.word, r.correction, r.context]);
+  } else if (currentMode === "keyword") {
+    headers = ["Risk","Title","URL","Matched Terms"];
+    rows = kwResults.map(r => [r.risk, r.title, r.html_url, r.matched.join("; ")]);
+  } else if (currentMode === "link") {
+    headers = ["Status","HTTP Code","Article Title","Article URL","Link Text","Link URL"];
+    rows = linkResults.map(r => [r.status, r.code || "", r.article_title, r.article_url, r.linkText || "", r.url]);
+  } else {
+    headers = ["Title","URL"];
+    rows = srchResults.map(r => [r.title, r.html_url]);
+  }
+  const csv = [headers, ...rows]
+    .map(r => r.map(c => `"${(c||"").toString().replace(/"/g,'""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const suggestedName = `kb-audit-${currentMode}-${new Date().toISOString().slice(0,10)}.csv`;
+  saveFileAs(blob, suggestedName, "CSV file", [".csv"]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DICTIONARY  (custom ignore list, persisted in localStorage)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function loadCustomWords() {
+  try { return JSON.parse(localStorage.getItem("kbDictCustom") || "[]"); }
+  catch(e) { return []; }
+}
+function saveCustomWords(arr) {
+  // Save locally for instant UI feedback
+  try { localStorage.setItem("kbDictCustom", JSON.stringify(arr)); } catch(e) {}
+  // Sync to shared Drive file via GAS API
+  const apiUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec";
+  fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ words: arr })
+  }).catch(function(err) { console.warn("Dict sync failed:", err); });
+}
+
+// Pull the shared dictionary from Drive on startup and merge with local words
+function syncSharedDictionary() {
+  const apiUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec?action=getDictionary";
+  fetch(apiUrl)
+    .then(function(r) { return r.json(); })
+    .then(function(serverWords) {
+      if (!serverWords || !serverWords.length) return;
+      const local  = loadCustomWords();
+      const merged = Array.from(new Set(local.concat(serverWords)));
+      if (merged.length === local.length) return; // nothing new
+      try { localStorage.setItem("kbDictCustom", JSON.stringify(merged)); } catch(e) {}
+      buildIgnoreSet();
+      renderDictPanel();
+      if (spellResults && spellResults.length) refreshSpellResults();
+      console.log("Synced " + (merged.length - local.length) + " new word(s) from shared dictionary.");
+    })
+    .catch(function(err) { console.warn("Dict fetch failed:", err); });
+}
+
+function addDictWord() {
+  const input = document.getElementById("dictInput");
+  const word = input.value.trim().toLowerCase();
+  if (!word) return;
+  const custom = loadCustomWords();
+  if (!custom.includes(word) && !BUILTIN_IGNORED.includes(word)) {
+    custom.push(word);
+    saveCustomWords(custom);
+  }
+  input.value = "";
+  IGNORED_WORDS = buildIgnoreSet();
+  renderDictPanel();
+}
+
+function removeDictWord(word) {
+  const custom = loadCustomWords().filter(w => w !== word);
+  saveCustomWords(custom);
+  IGNORED_WORDS = buildIgnoreSet();
+  renderDictPanel();
+}
+
+function clearCustomDictionary() {
+  const custom = loadCustomWords();
+  if (!custom.length) {
+    setStatus("No custom words to clear.");
+    return;
+  }
+  if (!confirm(`Remove all ${custom.length} custom word${custom.length !== 1 ? "s" : ""} from your dictionary? Built-in words are unaffected.`)) return;
+  saveCustomWords([]);
+  IGNORED_WORDS = buildIgnoreSet();
+  renderDictPanel();
+  setStatus(`Cleared ${custom.length} custom word${custom.length !== 1 ? "s" : ""} from your dictionary.`);
+}
+
+function toggleDictSection(section) {
+  const el = document.getElementById("dict" + (section === "custom" ? "Custom" : "Builtin") + "Section");
+  if (el) el.style.display = el.style.display === "none" ? "" : "none";
+}
+
+function renderDictPanel() {
+  const custom = loadCustomWords();
+  const customContainer = document.getElementById("dictCustomTags");
+  const builtinContainer = document.getElementById("dictBuiltinTags");
+  document.getElementById("dictCustomCount").textContent = custom.length;
+  document.getElementById("dictBuiltinCount").textContent = BUILTIN_IGNORED.length;
+  document.getElementById("dictWordCount").textContent =
+    `${BUILTIN_IGNORED.length + custom.length} total words ignored during spell check`;
+
+  // Custom words
+  if (custom.length === 0) {
+    customContainer.innerHTML = `<span style="font-size:12px;color:#aaa;font-style:italic;">No custom words yet.</span>`;
+  } else {
+    customContainer.innerHTML = custom.sort().map(w => `
+      <span class="flag-tag" style="background:#e8f1fd;color:#0055b3;border-color:#b3d0f7;">
+        ${escHtml(w)}
+        <span class="flag-tag-remove" onclick="removeDictWord('${escHtml(w)}')" title="Remove">×</span>
+      </span>`).join("");
+  }
+
+  // Built-in words (shown when expanded)
+  builtinContainer.innerHTML = BUILTIN_IGNORED.slice().sort().map(w =>
+    `<span class="flag-tag">${escHtml(w)}</span>`
+  ).join("");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SCAN CACHE  (save/load results from localStorage)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function saveScanCache(results, checkedCount) {
+  try {
+    const cache = { ts: Date.now(), checked: checkedCount, results };
+    localStorage.setItem("kbSpellCache", JSON.stringify(cache));
+    updateCacheButton();
+  } catch(e) {}
+}
+
+function updateCacheButton() {
+  try {
+    const raw = localStorage.getItem("kbSpellCache");
+    const btn = document.getElementById("loadCacheBtn");
+    const label = document.getElementById("cacheDateLabel");
+    if (!raw || !btn) return;
+    const cache = JSON.parse(raw);
+    const d = new Date(cache.ts);
+    label.textContent = d.toLocaleDateString(undefined, {month:"short", day:"numeric"}) +
+                        " " + d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+    btn.style.display = "inline-block";
+  } catch(e) {}
+}
+
+function loadCachedScan() {
+  try {
+    const raw = localStorage.getItem("kbSpellCache");
+    if (!raw) return;
+    const cache = JSON.parse(raw);
+    spellCheckedCount = cache.checked || (cache.results || []).length;
+
+    // Auto-apply dictionary — filter out words now in the ignore list
+    IGNORED_WORDS = buildIgnoreSet();
+    const all = cache.results || [];
+    spellResults = all.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
+    const removed = all.length - spellResults.length;
+
+    resetResults();
+    setSpellHeaders();
+    spellResults.forEach(m => appendSpellRow(m));
+    renderSpellSummary(spellCheckedCount, spellResults.length, 0);
+    const hasSpell = spellResults.length > 0;
+    setSpellCsvBtn(hasSpell);
+    if (hasSpell) document.getElementById("refreshResultsBtn").style.display = "inline-block";
+    const d = new Date(cache.ts);
+    const dictNote = removed > 0 ? ` (${removed} filtered out by your dictionary)` : "";
+    setStatus(`Loaded cached scan from ${d.toLocaleString()} — ${spellCheckedCount} articles, ${spellResults.length} issues${dictNote}.`);
+    document.getElementById("progressCard").classList.remove("visible");
+  } catch(e) {
+    setStatus("Could not load cached scan: " + e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SHARE: Export / Import scan results as JSON
+// ═══════════════════════════════════════════════════════════════════════════
+
+function exportResultsJSON() {
+  if (!spellResults.length) return;
+  const payload = {
+    version: 1,
+    scannedAt: new Date().toISOString(),
+    checkedCount: spellCheckedCount || spellResults.length,
+    results: spellResults
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const suggestedName = `kb-spell-results-${new Date().toISOString().slice(0,10)}.json`;
+  saveFileAs(blob, suggestedName, "JSON file", [".json"]);
+}
+
+function importResultsJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const payload = JSON.parse(e.target.result);
+      if (!payload.results || !Array.isArray(payload.results)) throw new Error("Invalid file format.");
+      const checked = payload.checkedCount || payload.results.length;
+      spellCheckedCount = checked;
+
+      // Auto-apply dictionary — filter out any words already in the ignore list
+      IGNORED_WORDS = buildIgnoreSet();
+      spellResults = payload.results.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
+      const removed = payload.results.length - spellResults.length;
+
+      resetResults();
+      setSpellHeaders();
+      spellResults.forEach(m => appendSpellRow(m));
+      renderSpellSummary(checked, spellResults.length, 0);
+      const hasResults = spellResults.length > 0;
+      setSpellCsvBtn(hasResults);
+      if (hasResults) document.getElementById("refreshResultsBtn").style.display = "inline-block";
+      document.getElementById("shareExportBtn").style.display = "inline-block";
+      document.getElementById("progressCard").classList.remove("visible");
+
+      const d = new Date(payload.scannedAt);
+      const dictNote = removed > 0 ? ` (${removed} filtered out by your dictionary)` : "";
+      setStatus(`Loaded results from ${d.toLocaleDateString()} — ${checked} articles, ${spellResults.length} issues${dictNote}.`);
+
+      // Switch to spell check tab to show results
+      const spellTab = document.querySelector(".mode-tab");
+      setMode("spell", spellTab);
+      // Cache it locally too
+      saveScanCache(spellResults, checked);
+    } catch(err) {
+      setStatus("Error loading file: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = ""; // allow re-loading same file
+}
+
+// Also show share button when scan completes
+function showShareBtn() {
+  document.getElementById("shareExportBtn").style.display = "inline-block";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LINK CHECKER — Share / Import results as JSON
+// ═══════════════════════════════════════════════════════════════════════════
+
+function exportLinkJSON() {
+  if (!linkResults.length) return;
+  const payload = {
+    version: 1,
+    scannedAt: new Date().toISOString(),
+    checkedCount: linkCheckedCount,
+    results: linkResults
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const suggestedName = `kb-link-results-${new Date().toISOString().slice(0,10)}.json`;
+  saveFileAs(blob, suggestedName, "JSON file", [".json"]);
+}
+
+function importLinkJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const payload = JSON.parse(e.target.result);
+      if (!payload.results || !Array.isArray(payload.results)) throw new Error("Invalid file format.");
+      linkResults = payload.results;
+      linkCheckedCount = payload.checkedCount || linkResults.length;
+
+      resetResults();
+      unverifShown = true;
+      setLinkHeaders();
+      linkResults.forEach(r => appendLinkRow(r));
+
+      const broken    = linkResults.filter(r => r.status === "broken" || r.status === "neterror").length;
+      const redirects = linkResults.filter(r => r.status === "redirect").length;
+      const unverif   = linkResults.filter(r => r.status === "unverifiable").length;
+      const errs      = linkResults.filter(r => r.status === "timeout").length;
+      renderLinkSummary(linkCheckedCount, broken, redirects, unverif, errs);
+
+      document.getElementById("exportBtn").disabled = false;
+      document.getElementById("linkShareBtn").style.display = "inline-block";
+      document.getElementById("linkProgressCard").classList.remove("visible");
+      document.getElementById("linkLegend").style.display = "";
+
+      // Switch to link checker tab
+      const linkTab = document.querySelectorAll(".mode-tab")[4];
+      setMode("link", linkTab);
+
+      const d = new Date(payload.scannedAt);
+      const actionable = broken + redirects + errs;
+      setStatus(`Loaded shared results from ${d.toLocaleDateString()} — ${linkCheckedCount} URLs checked, ${actionable} actionable issue${actionable !== 1 ? "s" : ""}, ${unverif} unverifiable.`);
+
+      // Cache locally too
+      saveLinkCache(linkResults, linkCheckedCount);
+    } catch(err) {
+      setStatus("Error loading file: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = "";
+}
+
+function exportDictionary() {
+  const custom = loadCustomWords();
+  if (!custom.length) { alert("No custom words to export yet."); return; }
+  const blob = new Blob([custom.sort().join("\n")], { type: "text/plain" });
+  saveFileAs(blob, "kb-auditor-dictionary.txt", "Text file", [".txt"]);
+}
+
+function importDictionary(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split(/[\n,]+/).map(w => w.trim().toLowerCase()).filter(w => w.length > 1);
+    const current = loadCustomWords();
+    let added = 0;
+    for (const w of lines) {
+      if (!current.includes(w) && !BUILTIN_IGNORED.includes(w)) { current.push(w); added++; }
+    }
+    saveCustomWords(current);
+    IGNORED_WORDS = buildIgnoreSet();
+    renderDictPanel();
+    setStatus(`Imported ${added} new word${added !== 1 ? "s" : ""} into your dictionary.`);
+  };
+  reader.readAsText(file);
+  event.target.value = "";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LINK CHECKER
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LINK_CONCURRENCY = 6;     // parallel URL checks
+const LINK_TIMEOUT_MS  = 12000; // per-URL timeout
+
+// ── Extract all <a href> links from raw article HTML ────────────────────────
+function extractLinks(html, articleUrl) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  const results = [];
+  for (const a of div.querySelectorAll("a[href]")) {
+    const href = (a.getAttribute("href") || "").trim();
+    if (!href) continue;
+    // Skip anchors, mailto, tel, javascript, and data URIs
+    if (/^(#|mailto:|tel:|javascript:|data:)/i.test(href)) continue;
+    let url;
+    try { url = new URL(href, articleUrl).href; } catch(e) { continue; }
+    // Strip fragment (we only care about the page itself)
+    const normalized = url.split("#")[0].replace(/\/$/, "");
+    if (!normalized.startsWith("http")) continue;
+    results.push({ url: normalized, text: (a.textContent || "").trim().slice(0, 100) });
+  }
+  return results;
+}
+
+// ── Proxy engine ─────────────────────────────────────────────────────────────
+// Internal domains are always checked directly (CORS-safe, no proxy needed)
+const INTERNAL_RE = /\.(appsflyer|zendesk|aftest)\.(com|io)/i;
+
+// Two proxy options tried in order; activeProxy is set at scan start
+const PROXY_DEFS = [
+  {
+    name: "corsproxy.io",
+    // Uses GET — HEAD is often blocked by target servers; proxy passes status through directly
+    async check(url, signal) {
+      const proxyUrl = "https://corsproxy.io/?url=" + encodeURIComponent(url);
+      const resp = await fetch(proxyUrl, { method: "GET", signal, redirect: "manual" });
+      // cancel body so we don't waste bandwidth downloading the page
+      try { resp.body && await resp.body.cancel(); } catch(_) {}
+      // redirect: "manual" → opaqueredirect (status 0, type="opaqueredirect") when 3xx happens
+      if (resp.type === "opaqueredirect" || resp.status === 0) return { status: "redirect", code: "3xx" };
+      if (resp.ok)    return { status: "ok",     code: resp.status };
+      if (resp.status >= 400) return { status: "broken", code: resp.status };
+      return null; // unexpected — try next proxy
+    }
+  },
+  {
+    name: "allorigins.win",
+    // Returns a JSON wrapper with the actual http_code — very reliable
+    async check(url, signal) {
+      const proxyUrl = "https://api.allorigins.win/get?url=" + encodeURIComponent(url);
+      const resp = await fetch(proxyUrl, { signal });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const code = data?.status?.http_code;
+      if (!code) return null;
+      if (code >= 200 && code < 300) return { status: "ok",       code };
+      if (code >= 300 && code < 400) return { status: "redirect", code };
+      if (code >= 400)               return { status: "broken",   code };
+      return null;
+    }
+  }
+];
+
+let activeProxy = null; // set by testProxies() before each scan
+
+// Test each proxy with a known-good URL and pick the first that works
+async function testProxies() {
+  const testUrl = "https://www.example.com";
+  for (const proxy of PROXY_DEFS) {
+    try {
+      setStatus(`Testing proxy: ${proxy.name}…`);
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 7000);
+      const result = await proxy.check(testUrl, ctrl.signal);
+      if (result && result.status === "ok") {
+        activeProxy = proxy;
+        return proxy;
+      }
+    } catch(_) {}
+  }
+  activeProxy = null;
+  return null;
+}
+
+// ── Proxy status UI ──────────────────────────────────────────────────────────
+function updateProxyStatus(proxy, disabled = false) {
+  const bar = document.getElementById("proxyStatusBar");
+  if (!bar) return;
+  if (disabled) {
+    bar.style.display = "block";
+    bar.style.background = "#f9f9fb";
+    bar.style.border = "1px solid #e0e0e5";
+    bar.style.color = "#888";
+    bar.innerHTML = "⚪ CORS proxy is disabled. External links will show as Unverifiable.";
+  } else if (proxy) {
+    bar.style.display = "block";
+    bar.style.background = "#e8f8ec";
+    bar.style.border = "1px solid #b5e5c0";
+    bar.style.color = "#217a3b";
+    bar.innerHTML = `✅ Proxy active: <strong>${proxy.name}</strong> — external links will return real status codes.`;
+  } else {
+    bar.style.display = "block";
+    bar.style.background = "#fff3cd";
+    bar.style.border = "1px solid #f5c842";
+    bar.style.color = "#7a5c00";
+    bar.innerHTML = `⚠️ <strong>No proxy available.</strong> Both corsproxy.io and allorigins.win are unreachable from your network. External links will show as Unverifiable — this is a browser security restriction, not a problem with the links themselves. <a href="https://corsproxy.io" target="_blank" style="color:#7a5c00;">Check corsproxy.io status ↗</a>`;
+  }
+}
+
+// ── Zendesk article smart-check (CORS-safe, no proxy needed) ─────────────────
+// For support.appsflyer.com and dev.appsflyer.com article links, we can verify
+// via the Zendesk API which is CORS-enabled (same API used to fetch articles).
+const ZD_ARTICLE_RE = /(?:support|dev)\.appsflyer\.com\/hc\/[a-z-]+\/articles\/(\d+)/i;
+const ZD_API_BASE   = "https://appsflyer.zendesk.com/api/v2/help_center/articles/";
+
+async function checkZendeskArticle(url) {
+  const match = url.match(ZD_ARTICLE_RE);
+  if (!match) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const resp = await fetch(ZD_API_BASE + match[1] + ".json", { signal: ctrl.signal });
+    clearTimeout(t);
+    if (resp.ok)            return { status: "ok",     code: 200 };
+    if (resp.status === 404) return { status: "broken", code: 404 };
+    return null; // unexpected code, fall through to normal check
+  } catch(e) {
+    clearTimeout(t);
+    return null;
+  }
+}
+
+// ── Check a single URL ───────────────────────────────────────────────────────
+async function checkLink(url) {
+  const useProxy = document.getElementById("useCorsProxy")?.checked ?? true;
+  const isInternal = INTERNAL_RE.test(url);
+
+  // ── Path 0: Zendesk article API (most reliable for internal article links) ─
+  const zdResult = await checkZendeskArticle(url);
+  if (zdResult) return zdResult;
+
+  // ── Path A: use active proxy for external links ───────────────────────────
+  if (useProxy && !isInternal && activeProxy) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), LINK_TIMEOUT_MS);
+    try {
+      const result = await activeProxy.check(url, ctrl.signal);
+      clearTimeout(t);
+      if (result) return result;
+      // proxy returned null (unexpected state) — fall through to direct
+    } catch(e) {
+      clearTimeout(t);
+      if (e.name === "AbortError") return { status: "timeout", code: null };
+      // proxy threw — fall through to direct check
+    }
+  }
+
+  // ── Path B: direct request — works for internal/CORS-enabled URLs ─────────
+  const ctrl1 = new AbortController();
+  const t1 = setTimeout(() => ctrl1.abort(), LINK_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { method: "HEAD", signal: ctrl1.signal, redirect: "follow" });
+    clearTimeout(t1);
+    if (resp.redirected) return { status: "redirect",  code: "3xx" };
+    if (resp.ok)         return { status: "ok",        code: resp.status };
+    return                      { status: "broken",    code: resp.status };
+  } catch(e1) {
+    clearTimeout(t1);
+    if (e1.name === "AbortError") return { status: "timeout", code: null };
+    // CORS block or network failure — probe with no-cors to tell them apart
+  }
+
+  // ── Path C: no-cors probe — is the server actually up? ───────────────────
+  const ctrl2 = new AbortController();
+  const t2 = setTimeout(() => ctrl2.abort(), 8000);
+  try {
+    await fetch(url, { method: "HEAD", mode: "no-cors", signal: ctrl2.signal });
+    clearTimeout(t2);
+    return { status: "unverifiable", code: null };
+  } catch(e2) {
+    clearTimeout(t2);
+    if (e2.name === "AbortError") return { status: "timeout",  code: null };
+    return                               { status: "neterror", code: null };
+  }
+}
+
+// ── Main scan ────────────────────────────────────────────────────────────────
+async function runLinkScan() {
+  if (isLinkRunning) return;
+  isLinkRunning = true;
+  linkStopFlag  = false;
+  linkResults   = [];
+  linkCheckedCount = 0;
+
+  document.getElementById("linkRunBtn").disabled = true;
+  document.getElementById("linkStopBtnEl").style.display = "inline-block";
+  document.getElementById("linkIdleNote").style.display  = "none";
+  document.getElementById("exportBtn").disabled = true;
+  document.getElementById("linkProgressCard").classList.add("visible");
+  document.getElementById("linkLegend").style.display = "block";
+
+  resetResults();
+  setLinkHeaders();
+  setLoading(true);
+  setLinkProgress("Testing proxy…", 0, "", "");
+
+  try {
+    // ── Step 0: test proxy if enabled ──
+    const useProxy = document.getElementById("useCorsProxy")?.checked ?? true;
+    if (useProxy) {
+      const proxy = await testProxies();
+      updateProxyStatus(proxy);
+      if (!proxy) {
+        setStatus("⚠️ No CORS proxy available — external links will show as Unverifiable. Continuing anyway…");
+        await new Promise(r => setTimeout(r, 2500)); // let user read the warning
+      }
+    } else {
+      activeProxy = null;
+      updateProxyStatus(null, true); // disabled intentionally
+    }
+    if (linkStopFlag) return finishLinkScan();
+
+    // ── Step 1: fetch all articles ──
+    setLinkProgress("Fetching article list…", 0, "", "");
+    setStatus("Fetching all articles from Zendesk Help Center…");
+    const allArticles = await fetchAllArticles();
+    if (linkStopFlag) return finishLinkScan();
+
+    // ── Step 2: extract and deduplicate all links ──
+    setStatus("Extracting links from articles…");
+    const urlMap = new Map(); // url → [{article_title, article_url, linkText}]
+    for (const art of allArticles) {
+      if (linkStopFlag) break;
+      for (const { url, text } of extractLinks(art.body || "", art.html_url || "")) {
+        if (!urlMap.has(url)) urlMap.set(url, []);
+        urlMap.get(url).push({
+          article_title: art.title || "",
+          article_url:   art.html_url || "",
+          linkText:      text
+        });
+      }
+    }
+    if (linkStopFlag) return finishLinkScan();
+
+    const uniqueUrls = [...urlMap.keys()];
+    const total = uniqueUrls.length;
+    setStatus(`Found ${total} unique URLs across ${allArticles.length} articles. Checking each one…`);
+
+    let checked = 0, broken = 0, redirects = 0, unverif = 0, errs = 0;
+
+    // ── Step 3: check URLs in concurrent batches ──
+    for (let i = 0; i < total; i += LINK_CONCURRENCY) {
+      if (linkStopFlag) break;
+      const batch = uniqueUrls.slice(i, i + LINK_CONCURRENCY);
+
+      await Promise.all(batch.map(async (url) => {
+        if (linkStopFlag) return;
+        const result = await checkLink(url);
+        checked++;
+        linkCheckedCount = checked;
+
+        // Tally
+        if      (result.status === "broken"       ) broken++;
+        else if (result.status === "neterror"      ) broken++;
+        else if (result.status === "redirect"      ) redirects++;
+        else if (result.status === "unverifiable"  ) unverif++;
+        else if (result.status === "timeout"       ) errs++;
+
+        // Store all non-OK rows and render them (including unverifiable — they may contain WIPs)
+        if (result.status !== "ok") {
+          for (const occ of (urlMap.get(url) || [])) {
+            const row = { ...result, url, ...occ };
+            linkResults.push(row);
+            if (currentMode === "link") {
+              appendLinkRow(row);
+            }
+          }
+        }
+
+        const pct = Math.round((checked / total) * 100);
+        setLinkProgress(
+          `Checking ${checked} of ${total} URLs`,
+          pct,
+          url.length > 70 ? url.slice(0, 67) + "…" : url,
+          `${broken} broken · ${redirects} redirect${redirects !== 1 ? "s" : ""} · ${unverif} unverifiable`
+        );
+        setStatus(`Checking links… ${checked}/${total} — ${broken} broken, ${redirects} redirects, ${unverif} unverifiable`);
+      }));
+    }
+
+    linkCheckedCount = checked;
+    setLinkProgress("Done", 100, "", "");
+    const actionable = broken + redirects + errs;
+    setStatus(`Done. Checked ${checked} unique URLs — ${actionable} actionable issue${actionable !== 1 ? "s" : ""} (${broken} broken, ${redirects} redirects), ${unverif} unverifiable (CORS, likely OK).`);
+    renderLinkSummary(checked, broken, redirects, unverif, errs);
+    setLinkCsvBtn(linkResults.length > 0);
+    saveLinkCache(linkResults, checked);
+
+  } catch(e) {
+    setStatus("Error: " + e.message);
+  }
+
+  finishLinkScan();
+}
+
+function finishLinkScan() {
+  isLinkRunning = false;
+  linkStopFlag  = false;
+  setLoading(false);
+  document.getElementById("linkRunBtn").disabled = false;
+  document.getElementById("linkStopBtnEl").style.display = "none";
+  document.getElementById("linkIdleNote").style.display  = "inline";
+  if (linkResults.length > 0) {
+    document.getElementById("linkShareBtn").style.display = "inline-block";
+  }
+}
+
+function stopLinkScan() {
+  linkStopFlag = true;
+  setStatus("Stopping after current batch…");
+}
+
+// ── Table helpers ────────────────────────────────────────────────────────────
+function setLinkHeaders() {
+  document.getElementById("tableHead").innerHTML =
+    `<th>Status</th><th>Article</th><th>Link Text</th><th>URL</th><th>Code</th>`;
+  document.getElementById("resultsTable").style.display = "";
+  document.getElementById("emptyState").style.display   = "none";
+}
+
+const LINK_STATUS_LABELS = {
+  ok:           "✅ OK",
+  broken:       "❌ Broken",
+  redirect:     "↪️ Redirect",
+  unverifiable: "⚠️ Unverifiable",
+  neterror:     "❌ Network Error",
+  timeout:      "⏱️ Timeout"
+};
+
+function appendLinkRow(r) {
+  // Show filter bar on the very first result so users can filter mid-scan
+  const filterBar = document.getElementById("filterBar");
+  if (!filterBar.innerHTML.trim()) {
+    document.getElementById("summaryBar").style.display = "flex";
+    filterBar.innerHTML = `
+      <button class="filter-btn active" onclick="filterLink('all',this)">All Issues</button>
+      <button class="filter-btn" onclick="filterLink('broken',this)">❌ Broken</button>
+      <button class="filter-btn" onclick="filterLink('neterror',this)">🛑 Network Error</button>
+      <button class="filter-btn" onclick="filterLink('redirect',this)">↪️ Redirect</button>
+      <button class="filter-btn" onclick="filterLink('unverifiable',this)">⚠️ Unverifiable</button>
+      <button class="filter-btn" onclick="filterLink('timeout',this)">⏱️ Timeout</button>
+      <button class="filter-btn" onclick="filterLink('wip',this)" title="Show only links whose URL contains 'wip' — likely work-in-progress articles that shouldn't be linked to yet">🚧 WIP</button>`;
+  }
+
+  const label = LINK_STATUS_LABELS[r.status] || r.status;
+  const tr = document.createElement("tr");
+  tr.dataset.filter = r.status;
+  tr.dataset.url = (r.url || "").toLowerCase();
+  tr.innerHTML = `
+    <td><span class="badge ${escHtml(r.status)}">${label}</span></td>
+    <td>
+      <div class="art-title">${escHtml(r.article_title)}</div>
+      <div class="art-url"><a href="${escHtml(r.article_url)}" target="_blank">Open ↗</a></div>
+    </td>
+    <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
+    <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
+    <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>`;
+  document.getElementById("resultsBody").appendChild(tr);
+}
+
+let unverifShown = true; // unverifiable rows are shown by default (may contain WIPs)
+
+function renderLinkSummary(checked, broken, redirects, unverif, errs) {
+  unverifShown = true; // shown by default on each new summary render
+  document.getElementById("summaryBar").style.display = "flex";
+
+  const unverifPill = unverif > 0
+    ? `<span class="pill total" id="unverifPill" style="cursor:pointer;user-select:none;" onclick="toggleUnverifiable()" title="These links returned a response but CORS prevents reading the status code — shown by default as they may contain WIP links.">
+        <span class="dot"></span>⚠️ ${unverif} unverifiable — <u style="font-size:11px;">hide</u>
+      </span>`
+    : "";
+
+  document.getElementById("summaryPills").innerHTML = `
+    <span class="pill total"><span class="dot"></span>${checked} URLs checked</span>
+    ${broken + errs > 0 ? `<span class="pill issues"><span class="dot"></span>${broken + errs} broken / errors</span>` : ""}
+    ${redirects > 0     ? `<span class="pill warn"  ><span class="dot"></span>${redirects} redirect${redirects !== 1 ? "s" : ""}</span>` : ""}
+    ${unverifPill}
+    ${(broken + errs + redirects) === 0 ? `<span class="pill clean"><span class="dot"></span>No broken links found</span>` : ""}`;
+
+  document.getElementById("filterBar").innerHTML = `
+    <button class="filter-btn active" onclick="filterLink('all',this)">All Shown</button>
+    <button class="filter-btn" onclick="filterLink('broken',this)">❌ Broken (4xx/5xx + DNS)</button>
+    <button class="filter-btn" onclick="filterLink('redirect',this)">↪️ Redirect</button>
+    <button class="filter-btn" onclick="filterLink('timeout',this)">⏱️ Timeout</button>
+    <button class="filter-btn" onclick="filterLink('wip',this)" title="Show only links whose URL contains 'wip' — likely work-in-progress articles that shouldn't be linked to yet">🚧 WIP</button>`;
+}
+
+function toggleUnverifiable() {
+  const pill = document.getElementById("unverifPill");
+  if (!pill) return;
+  if (!unverifShown) {
+    // Append unverifiable rows
+    const unverifRows = linkResults.filter(r => r.status === "unverifiable");
+    unverifRows.forEach(r => appendLinkRow(r));
+    unverifShown = true;
+    // Update filter bar to include unverifiable option
+    const fb = document.getElementById("filterBar");
+    if (fb && !fb.querySelector("[data-type='unverifiable']")) {
+      const btn = document.createElement("button");
+      btn.className = "filter-btn";
+      btn.dataset.type = "unverifiable";
+      btn.textContent = "⚠️ Unverifiable";
+      btn.onclick = function() { filterLink("unverifiable", this); };
+      fb.appendChild(btn);
+    }
+    if (pill) pill.innerHTML = `<span class="dot"></span>⚠️ ${unverifRows.length} unverifiable — <u style="font-size:11px;">hide</u>`;
+  } else {
+    // Remove unverifiable rows
+    document.querySelectorAll("#resultsBody tr[data-filter='unverifiable']").forEach(tr => tr.remove());
+    unverifShown = false;
+    const fb = document.getElementById("filterBar");
+    fb?.querySelector("[data-type='unverifiable']")?.remove();
+    const unverifCount = linkResults.filter(r => r.status === "unverifiable").length;
+    if (pill) pill.innerHTML = `<span class="dot"></span>⚠️ ${unverifCount} unverifiable — <u style="font-size:11px;">show</u>`;
+  }
+}
+
+function filterLink(type, btn) {
+  document.querySelectorAll("#filterBar .filter-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  document.querySelectorAll("#resultsBody tr").forEach(tr => {
+    if (type === "all") {
+      tr.classList.remove("hidden");
+      return;
+    }
+    // "broken" filter shows both 4xx/5xx and network errors
+    if (type === "broken") {
+      tr.classList.toggle("hidden", tr.dataset.filter !== "broken" && tr.dataset.filter !== "neterror");
+      return;
+    }
+    // "wip" filter matches any row whose URL contains "wip" (case-insensitive)
+    if (type === "wip") {
+      tr.classList.toggle("hidden", !(tr.dataset.url || "").includes("wip"));
+      return;
+    }
+    tr.classList.toggle("hidden", tr.dataset.filter !== type);
+  });
+}
+
+function setLinkProgress(title, pct, sub, count) {
+  document.getElementById("linkProgressTitle").textContent = title;
+  document.getElementById("linkProgressPct").textContent   = pct + "%";
+  document.getElementById("linkProgressFill").style.width  = pct + "%";
+  document.getElementById("linkProgressSub").textContent   = sub;
+  document.getElementById("linkProgressCount").textContent = count;
+}
+
+// ── Link result cache ────────────────────────────────────────────────────────
+function saveLinkCache(results, checkedCount) {
+  try {
+    localStorage.setItem("kbLinkCache", JSON.stringify({ ts: Date.now(), checked: checkedCount, results }));
+    updateLinkCacheButton();
+  } catch(e) {}
+}
+
+function loadCachedLinks() {
+  try {
+    const raw = localStorage.getItem("kbLinkCache");
+    if (!raw) return;
+    const cache = JSON.parse(raw);
+    linkResults      = cache.results || [];
+    linkCheckedCount = cache.checked || linkResults.length;
+    unverifShown = true;
+    resetResults();
+    setLinkHeaders();
+    // Render all results including unverifiable (they may contain WIPs)
+    linkResults.forEach(r => appendLinkRow(r));
+    const broken    = linkResults.filter(r => r.status === "broken"   || r.status === "neterror").length;
+    const redirects = linkResults.filter(r => r.status === "redirect").length;
+    const unverif   = linkResults.filter(r => r.status === "unverifiable").length;
+    const errs      = linkResults.filter(r => r.status === "timeout").length;
+    renderLinkSummary(linkCheckedCount, broken, redirects, unverif, errs);
+    const hasLink = linkResults.length > 0;
+    setLinkCsvBtn(hasLink);
+    if (hasLink) document.getElementById("linkShareBtn").style.display = "inline-block";
+    document.getElementById("linkProgressCard").classList.remove("visible");
+    const d = new Date(cache.ts);
+    const actionable = broken + redirects + errs;
+    setStatus(`Loaded cached scan from ${d.toLocaleString()} — ${linkCheckedCount} URLs, ${actionable} actionable issues, ${unverif} unverifiable.`);
+  } catch(e) {
+    setStatus("Could not load cached link scan: " + e.message);
+  }
+}
+
+function updateLinkCacheButton() {
+  try {
+    const raw = localStorage.getItem("kbLinkCache");
+    if (!raw) return;
+    const { ts } = JSON.parse(raw);
+    document.getElementById("linkCacheDateLabel").textContent = new Date(ts).toLocaleDateString();
+    document.getElementById("loadLinkCacheBtn").style.display = "inline-block";
+  } catch(e) {}
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+updateCacheButton();
+updateLinkCacheButton();
+renderDictPanel();
+syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not running in GAS)
+</script>
+</body>
+</html>

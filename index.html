@@ -949,7 +949,7 @@ function filterByOwner(owner, btn) {
   document.querySelectorAll("#resultsBody tr").forEach(tr => {
     if (owner === "All") { tr.style.display = ""; return; }
     const badge = tr.querySelector(".owner-badge");
-    const rowOwner = badge ? badge.textContent.trim() : "—";
+    const rowOwner = badge ? badge.textContent.trim().replace(/\s*▾$/, "") : "—";
     tr.style.display = (rowOwner === owner) ? "" : "none";
   });
 }

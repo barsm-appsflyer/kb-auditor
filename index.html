@@ -174,6 +174,17 @@
     .link-url-cell { font-size: 12px; word-break: break-all; max-width: 300px; }
     .link-url-cell a { color: #0071e3; text-decoration: none; }
     .link-url-cell a:hover { text-decoration: underline; }
+
+    /* Owner badges */
+    .owner-badge { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .owner-ilana   { background: #fce4ec; color: #c2185b; }
+    .owner-dori    { background: #e3f2fd; color: #1565c0; }
+    .owner-elliot  { background: #e8f5e9; color: #2e7d32; }
+    .owner-unknown { background: #f5f5f5; color: #9e9e9e; }
+
+    /* Fixed button */
+    .btn-fixed { background: #fff; color: #aaa; border: 1.5px solid #e0e0e5; }
+    .btn-fixed:hover { background: #fff8e1; border-color: #f5a623; color: #c8860a; }
     .link-text-cell { font-size: 12px; color: #555; max-width: 160px; word-break: break-word; }
 
     /* Spell check action column */
@@ -747,8 +758,14 @@ function refreshSpellResults() {
   // Rebuild the ignore set in case dictionary changed since the scan
   IGNORED_WORDS = buildIgnoreSet();
 
-  // Filter out any results that are now in the dictionary
-  const filtered = spellResults.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
+  // Reload fixed items in case they changed
+  FIXED_ITEMS = loadFixedItems();
+
+  // Filter out results that are now in the dictionary OR marked as fixed
+  const filtered = spellResults.filter(m =>
+    !IGNORED_WORDS.has((m.word || "").toLowerCase()) &&
+    !FIXED_ITEMS.has(`spell|${m.article_url}|${(m.word || "").toLowerCase()}`)
+  );
   const removed  = spellResults.length - filtered.length;
 
   // Re-render the table with the filtered list
@@ -823,10 +840,70 @@ function cleanArticleBody(html) {
   return text;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  OWNER LOOKUP — maps article title/url to team member
+// ═══════════════════════════════════════════════════════════════════════════
+function getArticleOwner(title, url) {
+  const t = (title || "").toLowerCase();
+  const u = (url  || "").toLowerCase();
+  const has = (...kw) => kw.some(k => t.includes(k) || u.includes(k));
+
+  // Elliot — check first (most specific product names)
+  if (has("protect360","fraud protection","fraud studio","token management","validation rule",
+          "my dashboard","activity metric","cross-platform view",
+          "mcp","agent hub","master api",
+          "skan","skadnetwork","conversion studio","enhanced attribution","google skan",
+          "user management","app transfer",
+          "advanced security module","cross-platform re-engagement")) return "Elliot";
+
+  // Dori
+  if (has("rta","real-time attribution",
+          "attribution link","attribution window","attribution model","attribution glossary","attribution method",
+          "web attribution","ctv","cross-platform measurement","console measurement",
+          "unity","react native","dma consent","security sdk","validateandlog","unreal engine",
+          "roi360","cost aggregation","revenue aggregation","ad revenue attribution",
+          "pull api","raw data","curl","data locker","uninstall tracking","retargeting best practice",
+          "inactivity period","ctv events api",
+          "meta ads","google ads integration","tiktok integration",
+          "dev hub","sdk release","sdk integration","srn partner","cost import","cost api")) return "Dori";
+
+  // Ilana
+  if (has("onelink","deep link","deeplinking","aasa","ios safari","branded domain",
+          "audiences","predictive","dcp","media partner connectivity","audience status","partner connectivity",
+          "partner marketplace","incrementality for ua","incrementality - ua",
+          "smart banner","creative optimization","creative",
+          "incrementality for retarget","incrementality - retarget")) return "Ilana";
+
+  return "—";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  FIXED ITEMS — persist dismissed rows across sessions
+// ═══════════════════════════════════════════════════════════════════════════
+const FIXED_STORAGE_KEY = "kbFixedItems";
+
+function loadFixedItems() {
+  try { return new Set(JSON.parse(localStorage.getItem(FIXED_STORAGE_KEY) || "[]")); }
+  catch(e) { return new Set(); }
+}
+function saveFixedItems(set) {
+  try { localStorage.setItem(FIXED_STORAGE_KEY, JSON.stringify([...set])); }
+  catch(e) {}
+}
+let FIXED_ITEMS = loadFixedItems();
+
+function markFixed(key, row) {
+  FIXED_ITEMS.add(key);
+  saveFixedItems(FIXED_ITEMS);
+  row.style.transition = "opacity 0.3s";
+  row.style.opacity = "0";
+  setTimeout(() => { row.style.display = "none"; }, 300);
+}
+
 // Spell table helpers
 function setSpellHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>Action</th>`;
+    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>Owner</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display = "none";
 }
@@ -835,6 +912,12 @@ function appendSpellRow(m) {
   const contextHtml = highlightWord(m.context || "", m.word || "");
   const word = m.word || "";
   const alreadyIgnored = IGNORED_WORDS.has(word.toLowerCase());
+  const fixKey = `spell|${m.article_url}|${word.toLowerCase()}`;
+  if (FIXED_ITEMS.has(fixKey)) return; // skip already-fixed rows
+
+  const owner = getArticleOwner(m.article_title, m.article_url);
+  const ownerClass = owner === "Ilana" ? "owner-ilana" : owner === "Dori" ? "owner-dori" : owner === "Elliot" ? "owner-elliot" : "owner-unknown";
+
   const tr = document.createElement("tr");
   tr.dataset.filter = "issues";
   tr.dataset.word = word.toLowerCase();
@@ -844,10 +927,14 @@ function appendSpellRow(m) {
     <td><span class="misspelled"><span class="wrong">${escHtml(word)}</span></span></td>
     <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
     <td class="context-cell">${contextHtml}</td>
-    <td>${alreadyIgnored
-      ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
-      : `<button class="btn btn-light btn-sm dict-add-btn" onclick="addWordFromSpellRow('${escHtml(word.toLowerCase())}', this)" title="Add '${escHtml(word)}' to your dictionary so it won't show up next time">+ Dictionary</button>`
-    }</td>
+    <td><span class="owner-badge ${ownerClass}">${escHtml(owner)}</span></td>
+    <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+      ${alreadyIgnored
+        ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
+        : `<button class="btn btn-light btn-sm dict-add-btn" onclick="addWordFromSpellRow('${escHtml(word.toLowerCase())}', this)" title="Add '${escHtml(word)}' to your dictionary so it won't show up next time">+ Dictionary</button>`
+      }
+      <button class="btn btn-sm btn-fixed" onclick="markFixed('${escHtml(fixKey)}', this.closest('tr'))" title="Mark as fixed — hides this row permanently">✓ Fixed</button>
+    </td>
   `;
   document.getElementById("resultsBody").appendChild(tr);
 }
@@ -1890,7 +1977,7 @@ function stopLinkScan() {
 // ── Table helpers ────────────────────────────────────────────────────────────
 function setLinkHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Status</th><th>Article</th><th>Link Text</th><th>URL</th><th>Code</th>`;
+    `<th>Status</th><th>Article</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display   = "none";
 }
@@ -1919,7 +2006,13 @@ function appendLinkRow(r) {
       <button class="filter-btn" onclick="filterLink('wip',this)" title="Show only links whose URL contains 'wip' — likely work-in-progress articles that shouldn't be linked to yet">🚧 WIP</button>`;
   }
 
+  const fixKey = `link|${r.article_url}|${r.url}`;
+  if (FIXED_ITEMS.has(fixKey)) return; // skip already-fixed rows
+
   const label = LINK_STATUS_LABELS[r.status] || r.status;
+  const owner = getArticleOwner(r.article_title, r.article_url);
+  const ownerClass = owner === "Ilana" ? "owner-ilana" : owner === "Dori" ? "owner-dori" : owner === "Elliot" ? "owner-elliot" : "owner-unknown";
+
   const tr = document.createElement("tr");
   tr.dataset.filter = r.status;
   tr.dataset.url = (r.url || "").toLowerCase();
@@ -1929,9 +2022,11 @@ function appendLinkRow(r) {
       <div class="art-title">${escHtml(r.article_title)}</div>
       <div class="art-url"><a href="${escHtml(r.article_url)}" target="_blank">Open ↗</a></div>
     </td>
+    <td><span class="owner-badge ${ownerClass}">${escHtml(owner)}</span></td>
     <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
     <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
-    <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>`;
+    <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>
+    <td><button class="btn btn-sm btn-fixed" onclick="markFixed('${escHtml(fixKey)}', this.closest('tr'))" title="Mark as fixed — hides this row permanently">✓ Fixed</button></td>`;
   document.getElementById("resultsBody").appendChild(tr);
 }
 

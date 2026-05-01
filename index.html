@@ -578,7 +578,18 @@ const BUILTIN_IGNORED = [
   "unityads","venedash","vida","vidaa","vidaaid","voluum","vserv","wakeapp","webpals",
   "wechat","winclap","xbox","xcframework","xcprivacy","xgraded","xiaomipai","xinlan",
   "xplatform","yahoogemini","yahoojapan","yandex","yandexdirect","yeahmobi","yjsearch",
-  "youappi","youdao","youlan","yunshu","zenna","zhihu","zoyo"
+  "youappi","youdao","youlan","yunshu","zenna","zhihu","zoyo",
+  // CTV / Connected-TV device advertising identifiers
+  // These appear in technical reference tables (e.g. "About device identifiers") and
+  // were causing false-positive spell-check flags.
+  "rida","lgudid","oaid","gaid","caid","daid","ppid","afid","vaid","psid",
+  "plaid","tvid","appid","ifa","maid","aaid","naid","baid","xaid",
+  // Additional mobile / platform identifiers
+  "ecid","dpid","duid","asid","msid","gsid","rsid","vsid","usid","tsid",
+  "adid","apid","imei","imsi","iccid","msisdn","meid","esn","udid",
+  // AppsFlyer-specific parameter names and internal terms
+  "attrid","attdata","skadid","skanad","convid","convdata","instid","sessid",
+  "eventid","evdata","clickid","viewid","ctuid","custid","custdata"
 ];
 
 // Merge built-in with any user-saved custom words from localStorage
@@ -873,11 +884,15 @@ async function fetchAllArticles() {
 // Strip HTML, decode entities, and clean text for spell checking
 function cleanArticleBody(html) {
   // Remove script/style/code/pre blocks entirely (don't spell-check code)
+  // Also remove <table> blocks — KB tables typically contain technical reference data
+  // (device identifiers, parameter names, code values) that produce false positives.
+  // Real prose typos are almost never inside tables.
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<code[\s\S]*?<\/code>/gi, " ")
-    .replace(/<pre[\s\S]*?<\/pre>/gi, " ");
+    .replace(/<pre[\s\S]*?<\/pre>/gi, " ")
+    .replace(/<table[\s\S]*?<\/table>/gi, " ");
   // Strip remaining HTML tags
   text = text.replace(/<[^>]+>/g, " ");
   // Decode common HTML entities (these cause false positives like &gt; → AGT)

@@ -185,6 +185,16 @@
     /* Fixed button */
     .btn-fixed { background: #fff; color: #aaa; border: 1.5px solid #e0e0e5; }
     .btn-fixed:hover { background: #fff8e1; border-color: #f5a623; color: #c8860a; }
+
+    /* Owner filter bar */
+    .owner-filter-bar { padding: 8px 32px; background: #fafafa; border-bottom: 1px solid #e8e8ed; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .owner-filter-bar .of-label { font-size: 12px; color: #888; font-weight: 500; margin-right: 2px; }
+    .owner-filter-btn { padding: 4px 14px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1.5px solid #e0e0e5; background: #fff; color: #555; transition: all 0.12s; }
+    .owner-filter-btn:hover { border-color: #999; }
+    .owner-filter-btn.active { border-color: #555; background: #555; color: #fff; }
+    .owner-filter-btn.of-dori.active   { background: #1565c0; border-color: #1565c0; color: #fff; }
+    .owner-filter-btn.of-ilana.active  { background: #c2185b; border-color: #c2185b; color: #fff; }
+    .owner-filter-btn.of-elliot.active { background: #2e7d32; border-color: #2e7d32; color: #fff; }
     .link-text-cell { font-size: 12px; color: #555; max-width: 160px; word-break: break-word; }
 
     /* Spell check action column */
@@ -411,6 +421,16 @@
 <div id="summaryBar" class="summary-bar" style="display:none">
   <div class="summary-pills" id="summaryPills"></div>
   <div class="filter-bar" id="filterBar"></div>
+</div>
+
+<!-- ── Owner filter bar ── -->
+<div class="owner-filter-bar" id="ownerFilterBar" style="display:none">
+  <span class="of-label">👤 Owner:</span>
+  <button class="owner-filter-btn active" data-owner="All" onclick="filterByOwner('All',this)">All</button>
+  <button class="owner-filter-btn of-dori"   data-owner="Dori"   onclick="filterByOwner('Dori',this)">Dori</button>
+  <button class="owner-filter-btn of-ilana"  data-owner="Ilana"  onclick="filterByOwner('Ilana',this)">Ilana</button>
+  <button class="owner-filter-btn of-elliot" data-owner="Elliot" onclick="filterByOwner('Elliot',this)">Elliot</button>
+  <button class="owner-filter-btn" data-owner="—" onclick="filterByOwner('—',this)">Unassigned</button>
 </div>
 
 <!-- ── Load more bar ── -->
@@ -842,6 +862,7 @@ function cleanArticleBody(html) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  OWNER LOOKUP — maps article title/url to team member
+//  Based on product responsibility list + Asana task history
 // ═══════════════════════════════════════════════════════════════════════════
 function getArticleOwner(title, url) {
   const t = (title || "").toLowerCase();
@@ -849,32 +870,154 @@ function getArticleOwner(title, url) {
   const has = (...kw) => kw.some(k => t.includes(k) || u.includes(k));
 
   // Elliot — check first (most specific product names)
-  if (has("protect360","fraud protection","fraud studio","token management","validation rule",
-          "my dashboard","activity metric","cross-platform view",
-          "mcp","agent hub","master api",
-          "skan","skadnetwork","conversion studio","enhanced attribution","google skan",
-          "user management","app transfer",
-          "advanced security module","cross-platform re-engagement")) return "Elliot";
+  if (has(
+    // Protect360
+    "protect360","fraud protection","fraud studio","token management","validation rule",
+    "click signing","app store validation","app store connect validation",
+    // Dashboards
+    "my dashboard","my dashboards","activity metric","retention dashboard","cross-platform view",
+    // MCP / Agent Hub
+    "mcp","agent hub",
+    // SKAN
+    "skan","skadnetwork","conversion studio","enhanced attribution","google skan","meta skan",
+    "skan ssot","skan vs classic","google ads skan","meta ads skan",
+    // User/App management
+    "user management","app transfer","adding app","managing appsflyer token",
+    "master api",
+    // Cross-platform re-engagement / Advanced security
+    "advanced security module","cross-platform re-engagement","re-engagement"
+  )) return "Elliot";
 
   // Dori
-  if (has("rta","real-time attribution",
-          "attribution link","attribution window","attribution model","attribution glossary","attribution method",
-          "web attribution","ctv","cross-platform measurement","console measurement",
-          "unity","react native","dma consent","security sdk","validateandlog","unreal engine",
-          "roi360","cost aggregation","revenue aggregation","ad revenue attribution",
-          "pull api","raw data","curl","data locker","uninstall tracking","retargeting best practice",
-          "inactivity period","ctv events api",
-          "meta ads","google ads integration","tiktok integration",
-          "dev hub","sdk release","sdk integration","srn partner","cost import","cost api")) return "Dori";
+  if (has(
+    // Attribution
+    "rta","real-time attribution",
+    "attribution link","attribution window","attribution model","attribution glossary",
+    "attribution method","organic search attribution","organic search",
+    "web attribution","web videos","onboard appsflyer web",
+    // Cross-platform measurement
+    "ctv","cross-platform measurement","console measurement","enriched engagement",
+    // SDK / Dev Hub
+    "unity","react native","dma consent","security sdk","validateandlog","unreal engine",
+    "dev hub","sdk release","sdk integration","sdk for dma",
+    // ROI360 / Cost / Revenue
+    "roi360","roi 360","cost aggregation","revenue aggregation","ad revenue attribution",
+    "cost data","web attribution - cost","web attribution - signals",
+    // Pull API / Raw Data
+    "pull api","raw data","curl","get roles api","referrer priority",
+    // Data Locker
+    "data locker","uninstall tracking","uninstall measurement",
+    "retargeting best practice","inactivity period","ctv events api",
+    // SRN Partners
+    "meta ads cost","google ads integration","tiktok integration",
+    "google icm","snap","conversions api for web","postback",
+    "srn partner","cost import","cost api","keyword data"
+  )) return "Dori";
 
   // Ilana
-  if (has("onelink","deep link","deeplinking","aasa","ios safari","branded domain",
-          "audiences","predictive","dcp","media partner connectivity","audience status","partner connectivity",
-          "partner marketplace","incrementality for ua","incrementality - ua",
-          "smart banner","creative optimization","creative",
-          "incrementality for retarget","incrementality - retarget")) return "Ilana";
+  if (has(
+    // OneLink / Deep linking
+    "onelink","deep link","deeplinking","aasa","ios safari","branded domain",
+    "single platform link","redirection",
+    // Audiences / DCP
+    "audiences","predictive","dcp","media partner connectivity","audience status",
+    "partner connectivity",
+    // Partner Marketplace / Integrations
+    "partner marketplace","awin","pinterest campaign","partner integration",
+    // Incrementality
+    "incrementality for ua","incrementality - ua","incrementality for retarget",
+    "incrementality - retarget","incrementality",
+    // Smart Banners / Creative
+    "smart banner","creative optimization","creative",
+    // Misc Ilana
+    "campaign configuration"
+  )) return "Ilana";
 
   return "—";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  OWNER FILTER — filter results table by owner name; supports URL hash
+// ═══════════════════════════════════════════════════════════════════════════
+function filterByOwner(owner, btn) {
+  document.querySelectorAll(".owner-filter-btn").forEach(b => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  else {
+    const found = document.querySelector(`.owner-filter-btn[data-owner="${owner}"]`);
+    if (found) found.classList.add("active");
+  }
+  document.querySelectorAll("#resultsBody tr").forEach(tr => {
+    if (owner === "All") { tr.style.display = ""; return; }
+    const badge = tr.querySelector(".owner-badge");
+    const rowOwner = badge ? badge.textContent.trim() : "—";
+    tr.style.display = (rowOwner === owner) ? "" : "none";
+  });
+}
+
+function showOwnerFilterBar() {
+  const bar = document.getElementById("ownerFilterBar");
+  if (bar) bar.style.display = "flex";
+  // Auto-apply hash filter if present
+  const hash = window.location.hash;
+  const m = hash.match(/#owner=(.+)/);
+  if (m) filterByOwner(decodeURIComponent(m[1]));
+}
+
+function resetOwnerFilter() {
+  document.querySelectorAll(".owner-filter-btn").forEach(b => b.classList.remove("active"));
+  const allBtn = document.querySelector(".owner-filter-btn[data-owner='All']");
+  if (allBtn) allBtn.classList.add("active");
+  const bar = document.getElementById("ownerFilterBar");
+  if (bar) bar.style.display = "none";
+}
+
+// ─── Owner badge + inline picker ───────────────────────────────────────────
+const OWNERS = ["Dori","Ilana","Elliot","—"];
+
+function ownerClass(o) {
+  return o === "Ilana" ? "owner-ilana" : o === "Dori" ? "owner-dori" : o === "Elliot" ? "owner-elliot" : "owner-unknown";
+}
+
+function ownerBadgeHtml(owner) {
+  return `<span class="owner-badge ${ownerClass(owner)}" style="cursor:pointer;" title="Click to change owner" onclick="toggleOwnerPicker(this,'${escHtml(owner)}')">${escHtml(owner)} ▾</span>`;
+}
+
+function toggleOwnerPicker(badge, currentOwner) {
+  // Close any open picker
+  document.querySelectorAll(".owner-picker").forEach(p => p.remove());
+
+  const picker = document.createElement("div");
+  picker.className = "owner-picker";
+  picker.style.cssText = "position:absolute;z-index:999;background:#fff;border:1.5px solid #d0d0d5;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:4px 0;min-width:100px;";
+  OWNERS.forEach(o => {
+    const opt = document.createElement("div");
+    opt.textContent = o === "—" ? "Unassigned" : o;
+    opt.style.cssText = `padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;color:${o === "Dori" ? "#1565c0" : o === "Ilana" ? "#c2185b" : o === "Elliot" ? "#2e7d32" : "#888"};`;
+    opt.onmouseenter = () => opt.style.background = "#f5f5f7";
+    opt.onmouseleave = () => opt.style.background = "";
+    opt.onclick = (e) => {
+      e.stopPropagation();
+      // Update badge
+      badge.className = `owner-badge ${ownerClass(o)}`;
+      badge.style.cursor = "pointer";
+      badge.title = "Click to change owner";
+      badge.textContent = "";
+      badge.onclick = () => toggleOwnerPicker(badge, o);
+      badge.textContent = (o || "—") + " ▾";
+      picker.remove();
+      // Re-apply current filter so the row shows/hides correctly
+      const activeBtn = document.querySelector(".owner-filter-btn.active");
+      if (activeBtn) filterByOwner(activeBtn.dataset.owner);
+    };
+    picker.appendChild(opt);
+  });
+
+  // Position near badge
+  badge.style.position = "relative";
+  badge.appendChild(picker);
+  setTimeout(() => document.addEventListener("click", function close(e) {
+    if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener("click", close); }
+  }), 10);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -906,6 +1049,7 @@ function setSpellHeaders() {
     `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>Owner</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display = "none";
+  showOwnerFilterBar();
 }
 
 function appendSpellRow(m) {
@@ -927,7 +1071,7 @@ function appendSpellRow(m) {
     <td><span class="misspelled"><span class="wrong">${escHtml(word)}</span></span></td>
     <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
     <td class="context-cell">${contextHtml}</td>
-    <td><span class="owner-badge ${ownerClass}">${escHtml(owner)}</span></td>
+    <td>${ownerBadgeHtml(owner)}</td>
     <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
       ${alreadyIgnored
         ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
@@ -1271,6 +1415,7 @@ function resetResults() {
   document.getElementById("summaryBar").style.display   = "none";
   document.getElementById("loadMoreBar").style.display  = "none";
   document.getElementById("exportBtn").disabled = true;
+  resetOwnerFilter();
 }
 
 function clearAll() {
@@ -1980,6 +2125,7 @@ function setLinkHeaders() {
     `<th>Status</th><th>Article</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display   = "none";
+  showOwnerFilterBar();
 }
 
 const LINK_STATUS_LABELS = {
@@ -2011,7 +2157,6 @@ function appendLinkRow(r) {
 
   const label = LINK_STATUS_LABELS[r.status] || r.status;
   const owner = getArticleOwner(r.article_title, r.article_url);
-  const ownerClass = owner === "Ilana" ? "owner-ilana" : owner === "Dori" ? "owner-dori" : owner === "Elliot" ? "owner-elliot" : "owner-unknown";
 
   const tr = document.createElement("tr");
   tr.dataset.filter = r.status;
@@ -2022,7 +2167,7 @@ function appendLinkRow(r) {
       <div class="art-title">${escHtml(r.article_title)}</div>
       <div class="art-url"><a href="${escHtml(r.article_url)}" target="_blank">Open ↗</a></div>
     </td>
-    <td><span class="owner-badge ${ownerClass}">${escHtml(owner)}</span></td>
+    <td>${ownerBadgeHtml(owner)}</td>
     <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
     <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
     <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>

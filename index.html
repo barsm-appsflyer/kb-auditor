@@ -803,6 +803,9 @@ async function runFullScan() {
           if (IGNORED_WORDS.has(word.toLowerCase())) continue;
           // Skip very short tokens
           if (word.length < 3) continue;
+          // Skip multi-word phrases — these are almost always <wbr> tag artifacts
+          // (e.g. "y ou" from y<wbr>ou rendered in source) that slip through as phrase matches
+          if (word.includes(" ")) continue;
           // Skip all-uppercase tokens (acronyms like API, SDK, SRN)
           if (/^[A-Z]{2,}$/.test(word)) continue;
           // Skip tokens with digits, underscores, or braces (code/IDs)
@@ -1174,8 +1177,13 @@ function setSpellHeaders() {
 }
 
 function appendSpellRow(m) {
-  const contextHtml = highlightWord(m.context || "", m.word || "");
   const word = m.word || "";
+  // Filter cached results that would have been caught by newer scan filters:
+  // — multi-word phrases are <wbr> artifacts (e.g. "y ou" from y<wbr>ou)
+  if (word.includes(" ")) return;
+  // — very short fragments (1-2 chars)
+  if (word.length < 3) return;
+  const contextHtml = highlightWord(m.context || "", word);
   const alreadyIgnored = IGNORED_WORDS.has(word.toLowerCase());
   const fixKey = `spell|${m.article_url}|${word.toLowerCase()}`;
   if (FIXED_ITEMS.has(fixKey)) return; // skip already-fixed rows
@@ -2655,16 +2663,18 @@ function closeFixModal() {
 // ── AI Verdict banner shown at top of Fix modal ──────────────────────────────
 function buildVerdictBanner(d) {
   if (!d.aiVerdict) {
-    // No verdict yet — offer to validate right now via sendPrompt
+    // No verdict yet — show action depending on context
+    const hasPromptFn = typeof window.sendPrompt === 'function';
     return `<div class="fm-verdict-banner" style="background:#f8f9fa;border:1.5px solid #e8e8ed;color:#555;">
       <span style="font-size:18px">🤖</span>
-      <div>
+      <div style="flex:1">
         <strong>AI verdict not yet available for this word.</strong>
-        <div style="margin-top:4px">
-          Click <strong>"Ask AI to Validate"</strong> to have Claude search the KB and confirm whether this is a real error or a technical term.
-          ${typeof window.sendPrompt === 'function'
-            ? `<button onclick="askAIValidateSingle('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" style="margin-left:8px" class="btn btn-sm btn-light">🔍 Ask AI to Validate</button>`
-            : `<button onclick="copyValidateSinglePrompt('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" style="margin-left:8px" class="btn btn-sm btn-light">📋 Copy validate prompt</button>`
+        <div style="margin-top:5px;font-size:12px;line-height:1.5">
+          ${hasPromptFn
+            ? `<button onclick="askAIValidateSingle('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" class="btn btn-sm btn-light" style="margin-right:6px">🔍 Ask AI to Validate</button>
+               <span style="color:#888">— or click <strong>🤖 AI Review</strong> in the toolbar to validate all results at once.</span>`
+            : `To get AI verdicts: close this, click <strong>🤖 AI Review</strong> in the toolbar → copy the prompt → paste it into Claude → copy Claude's JSON response → click <strong>⬇ Import Verdicts</strong>.
+               <button onclick="copyValidateSinglePrompt('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" style="display:block;margin-top:6px" class="btn btn-sm btn-light">📋 Or validate just this word</button>`
           }
         </div>
       </div>

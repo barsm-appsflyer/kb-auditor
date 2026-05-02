@@ -955,7 +955,8 @@ function cleanArticleBody(html) {
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<code[\s\S]*?<\/code>/gi, " ")
     .replace(/<pre[\s\S]*?<\/pre>/gi, " ")
-    .replace(/<table[\s\S]*?<\/table>/gi, " ");
+    .replace(/<table[\s\S]*?<\/table>/gi, " ")
+    .replace(/<wbr\s*\/?>/gi, "");   // <wbr> splits words visually (e.g. "y<wbr>ou") — remove without space
   // Strip remaining HTML tags
   text = text.replace(/<[^>]+>/g, " ");
   // Decode common HTML entities (these cause false positives like &gt; → AGT)
@@ -2763,20 +2764,28 @@ function buildSpellModal(d) {
       </div>
     </div>
 
-    <!-- Step 3: Generate prompt -->
+    <!-- Step 3: Fix the article -->
     <div class="fm-step locked" id="fms3">
-      <span class="fm-step-num">3</span><span class="fm-step-title">Get your Claude prompt</span>
+      <span class="fm-step-num">3</span>
+      <span class="fm-step-title">${typeof window.sendPrompt === 'function' ? 'Fix the article' : 'Get your Claude prompt'}</span>
       <div class="fm-step-body" id="fms3body">
-        <p style="margin:0 0 8px;color:#555;">Copy this prompt and paste it into Claude (Cowork mode) to run the full af-kb-pipeline fix with safety checks:</p>
-        <div class="fm-prompt-box" id="spellPromptBox">${escHtml(generateSpellPrompt(d, artId))}</div>
-        <div class="fm-tip">💡 Claude will fetch the article, check if it's locked (Rule 1), then show you the exact before→after diff and wait for your <strong>"confirmed"</strong> before making any change.</div>
+        ${typeof window.sendPrompt === 'function'
+          ? `<p style="margin:0 0 8px;color:#555;">Click <strong>Fix Now</strong> — Claude will run the full af-kb-pipeline safety workflow automatically. No copy-paste needed.</p>
+             <div class="fm-tip">💡 Claude will fetch the article, check if it's locked (Rule 1), show you the exact before→after diff, and wait for your <strong>"confirmed"</strong> before saving any change.</div>`
+          : `<p style="margin:0 0 8px;color:#555;">Copy this prompt and paste it into Claude (Cowork mode) to run the full af-kb-pipeline fix with safety checks:</p>
+             <div class="fm-prompt-box" id="spellPromptBox">${escHtml(generateSpellPrompt(d, artId))}</div>
+             <div class="fm-tip">💡 Claude will fetch the article, check if it's locked (Rule 1), then show you the exact before→after diff and wait for your <strong>"confirmed"</strong> before making any change.</div>`
+        }
       </div>
     </div>
   </div>
   <div class="fm-footer" id="fmFooter">
     <button class="btn btn-ghost btn-sm" onclick="closeFixModal()">Cancel</button>
-    <button class="btn btn-light btn-sm" id="fmCopyBtn" disabled onclick="copyFixPrompt('spell')">📋 Copy prompt</button>
-    <button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="copyAndOpenClaude('spell')">Open in Claude ↗</button>
+    ${typeof window.sendPrompt === 'function'
+      ? `<button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="sendFixPromptNow('spell')">🔧 Fix Now</button>`
+      : `<button class="btn btn-light btn-sm" id="fmCopyBtn" disabled onclick="copyFixPrompt('spell')">📋 Copy prompt</button>
+         <button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="copyAndOpenClaude('spell')">Open in Claude ↗</button>`
+    }
   </div>`;
 }
 
@@ -2879,18 +2888,26 @@ function buildLinkModal(d) {
 
     <!-- Step 3: Generate prompt -->
     <div class="fm-step locked" id="fmls3">
-      <span class="fm-step-num">3</span><span class="fm-step-title">Get your Claude prompt</span>
+      <span class="fm-step-num">3</span>
+      <span class="fm-step-title">${typeof window.sendPrompt === 'function' ? 'Fix the article' : 'Get your Claude prompt'}</span>
       <div class="fm-step-body">
-        <p style="margin:0 0 8px;color:#555;">Copy this prompt into Claude (Cowork) to run the full af-kb-pipeline fix:</p>
-        <div class="fm-prompt-box" id="linkPromptBox">Complete the steps above to generate your prompt.</div>
-        <div class="fm-tip">💡 Claude will fetch the article, check for locks (Rule 1), show you the exact diff (Rule 2), and wait for your <strong>"confirmed"</strong> before saving.</div>
+        ${typeof window.sendPrompt === 'function'
+          ? `<p style="margin:0 0 8px;color:#555;">Click <strong>Fix Now</strong> — Claude will run the full af-kb-pipeline safety workflow automatically.</p>
+             <div class="fm-tip">💡 Claude will fetch the article, check if it's locked (Rule 1), show you the exact before→after diff, and wait for your <strong>"confirmed"</strong> before saving.</div>`
+          : `<p style="margin:0 0 8px;color:#555;">Copy this prompt into Claude (Cowork) to run the full af-kb-pipeline fix:</p>
+             <div class="fm-prompt-box" id="linkPromptBox">Complete the steps above to generate your prompt.</div>
+             <div class="fm-tip">💡 Claude will fetch the article, check for locks (Rule 1), show you the exact diff (Rule 2), and wait for your <strong>"confirmed"</strong> before saving.</div>`
+        }
       </div>
     </div>
   </div>
   <div class="fm-footer">
     <button class="btn btn-ghost btn-sm" onclick="closeFixModal()">Cancel</button>
-    <button class="btn btn-light btn-sm" id="fmCopyBtn" disabled onclick="copyFixPrompt('link')">📋 Copy prompt</button>
-    <button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="copyAndOpenClaude('link')">Open in Claude ↗</button>
+    ${typeof window.sendPrompt === 'function'
+      ? `<button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="sendFixPromptNow('link')">🔧 Fix Now</button>`
+      : `<button class="btn btn-light btn-sm" id="fmCopyBtn" disabled onclick="copyFixPrompt('link')">📋 Copy prompt</button>
+         <button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="copyAndOpenClaude('link')">Open in Claude ↗</button>`
+    }
   </div>`;
 }
 
@@ -2997,6 +3014,29 @@ function copyAndOpenClaude(type) {
     footer.parentNode.insertBefore(tip, footer);
     setTimeout(() => tip.remove(), 4000);
   }
+}
+
+// ── Direct fix: send prompt to Claude chat (Cowork mode only) ────────────────
+function sendFixPromptNow(type) {
+  if (typeof window.sendPrompt !== 'function') {
+    // Shouldn't happen — button only shown when sendPrompt is available — but just in case
+    copyAndOpenClaude(type);
+    return;
+  }
+  const d = _fixData;
+  if (!d) return;
+  const artId = extractArticleId(d.article_url || "");
+  let prompt;
+  if (type === 'spell') {
+    prompt = generateSpellPrompt(d, artId);
+  } else {
+    // For link type, get the new URL from the input field
+    const newUrlEl = document.getElementById("linkNewUrl");
+    const newUrl = (newUrlEl ? newUrlEl.value.trim() : "") || d._newUrl || "";
+    prompt = generateLinkPrompt(d, artId, newUrl);
+  }
+  closeFixModal();
+  window.sendPrompt(prompt);
 }
 
 // Close modal on backdrop click

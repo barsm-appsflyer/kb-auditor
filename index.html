@@ -2791,8 +2791,9 @@ function buildSpellModal(d) {
   </div>
   <div class="fm-footer" id="fmFooter">
     <button class="btn btn-ghost btn-sm" onclick="closeFixModal()">Cancel</button>
+    <button class="btn btn-sm" id="fmWebhookBtn" disabled onclick="fixViaWebhook()" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer;" title="Send fix directly to Zendesk via Make.com — instant, no Claude prompt needed">⚡ Fix via Webhook</button>
     ${typeof window.sendPrompt === 'function'
-      ? `<button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="sendFixPromptNow('spell')">🔧 Fix Now</button>`
+      ? `<button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="sendFixPromptNow('spell')">🔧 Fix via Claude</button>`
       : `<button class="btn btn-light btn-sm" id="fmCopyBtn" disabled onclick="copyFixPrompt('spell')">📋 Copy prompt</button>
          <button class="btn btn-primary btn-sm" id="fmOpenBtn" disabled onclick="copyAndOpenClaude('spell')">Open in Claude ↗</button>`
     }
@@ -2826,8 +2827,9 @@ function updateSpellSteps() {
   const s1 = document.getElementById("fms1");
   const s2 = document.getElementById("fms2");
   const s3 = document.getElementById("fms3");
-  const copyBtn = document.getElementById("fmCopyBtn");
-  const openBtn = document.getElementById("fmOpenBtn");
+  const copyBtn    = document.getElementById("fmCopyBtn");
+  const openBtn    = document.getElementById("fmOpenBtn");
+  const webhookBtn = document.getElementById("fmWebhookBtn");
 
   if (!c1 || !s2) return;
 
@@ -2842,12 +2844,93 @@ function updateSpellSteps() {
   if (c2 && c2.checked) {
     s2.classList.remove("active"); s2.classList.add("done");
     s3.classList.remove("locked"); s3.classList.add("active");
-    if (copyBtn) { copyBtn.disabled = false; }
-    if (openBtn) { openBtn.disabled = false; }
+    if (copyBtn)    { copyBtn.disabled    = false; }
+    if (openBtn)    { openBtn.disabled    = false; }
+    if (webhookBtn) { webhookBtn.disabled = false; }
   } else {
     s3.classList.add("locked"); s3.classList.remove("active");
-    if (copyBtn) { copyBtn.disabled = true; }
-    if (openBtn) { openBtn.disabled = true; }
+    if (copyBtn)    { copyBtn.disabled    = true; }
+    if (openBtn)    { openBtn.disabled    = true; }
+    if (webhookBtn) { webhookBtn.disabled = true; }
+  }
+}
+
+// ── Webhook Fix ──────────────────────────────────────────────────────────────
+async function fixViaWebhook() {
+  if (!_fixData) return;
+
+  const artId = extractArticleId(_fixData.article_url);
+  if (!artId) {
+    alert("Could not extract article ID from URL:\n" + _fixData.article_url);
+    return;
+  }
+
+  const btn    = document.getElementById("fmWebhookBtn");
+  const footer = document.getElementById("fmFooter");
+
+  // Create (or reuse) status bar above the footer buttons
+  let statusEl = document.getElementById("webhookStatus");
+  if (!statusEl) {
+    statusEl = document.createElement("div");
+    statusEl.id = "webhookStatus";
+    statusEl.style.cssText = "width:100%;margin-bottom:8px;padding:8px 12px;border-radius:6px;font-size:13px;box-sizing:border-box;";
+    footer.insertBefore(statusEl, footer.firstChild);
+  }
+
+  btn.disabled = true;
+  btn.textContent = "⏳ Sending…";
+  statusEl.style.cssText += "background:#f0f4ff;color:#444;";
+  statusEl.textContent = "Sending fix to Make.com…";
+
+  const payload = {
+    article_id: parseInt(artId, 10),
+    find:    _fixData.word,
+    replace: _fixData.correction
+  };
+
+  try {
+    const resp = await fetch(
+      "https://hook.eu1.make.celonis.com/ncpkkj25yo57rikfa7g1r61l7tpe99lr",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (resp.ok) {
+      statusEl.style.background = "#e8f5e9";
+      statusEl.style.color      = "#2e7d32";
+      statusEl.textContent      = "✅ Fixed! Article updated in Zendesk.";
+      btn.textContent           = "✅ Done";
+
+      // Auto-mark the table row as fixed so it disappears from results
+      const fixKey = `spell|${_fixData.article_url}|${(_fixData.word || "").toLowerCase()}`;
+      // Find the matching row by its Fix button data attributes
+      const rows = document.querySelectorAll("#resultsBody tr");
+      for (const row of rows) {
+        const fb = row.querySelector('.btn-fix[data-fix-type="spell"]');
+        if (fb && fb.dataset.fixUrl === _fixData.article_url && fb.dataset.fixWord === _fixData.word) {
+          markFixed(fixKey, row);
+          break;
+        }
+      }
+      // Close modal after short delay so user can see the success message
+      setTimeout(closeFixModal, 1800);
+    } else {
+      const txt = await resp.text().catch(() => "");
+      statusEl.style.background = "#fdecea";
+      statusEl.style.color      = "#c62828";
+      statusEl.textContent      = `❌ Error ${resp.status} — check Make.com logs.${txt ? " " + txt.slice(0,80) : ""}`;
+      btn.disabled    = false;
+      btn.textContent = "⚡ Fix via Webhook";
+    }
+  } catch (e) {
+    statusEl.style.background = "#fdecea";
+    statusEl.style.color      = "#c62828";
+    statusEl.textContent      = "❌ Network error — " + e.message;
+    btn.disabled    = false;
+    btn.textContent = "⚡ Fix via Webhook";
   }
 }
 

@@ -189,6 +189,16 @@
     /* ── Fix via Claude button ────────────────────────────────────────────── */
     .btn-fix { background: #f0f7ff; color: #0071e3; border: 1.5px solid #b3d4f8; font-weight: 600; }
     .btn-fix:hover { background: #0071e3; color: #fff; border-color: #0071e3; }
+    /* AI verdict badges */
+    .verdict-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; border-radius:20px; padding:2px 8px; white-space:nowrap; }
+    .verdict-genuine     { background:#fff0f0; color:#c0392b; border:1px solid #f5c6c6; }
+    .verdict-falsepos    { background:#f0fff4; color:#16a34a; border:1px solid #bbf7d0; }
+    .verdict-uncertain   { background:#fffbeb; color:#b45309; border:1px solid #fde68a; }
+    /* AI verdict banner inside Fix modal */
+    .fm-verdict-banner { border-radius:10px; padding:11px 14px; margin-bottom:14px; font-size:13px; line-height:1.5; display:flex; gap:10px; align-items:flex-start; }
+    .fm-verdict-genuine   { background:#fff0f0; border:1.5px solid #f5c6c6; color:#7f1d1d; }
+    .fm-verdict-falsepos  { background:#f0fff4; border:1.5px solid #bbf7d0; color:#14532d; }
+    .fm-verdict-uncertain { background:#fffbeb; border:1.5px solid #fde68a; color:#78350f; }
 
     /* ── Fix Modal overlay ───────────────────────────────────────────────── */
     #fixModal { display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.55); backdrop-filter:blur(3px); align-items:center; justify-content:center; }
@@ -282,6 +292,10 @@
       <button class="btn btn-light btn-sm" id="spellCsvBtn" onclick="exportCSV()" style="display:none" title="Download results as a CSV file you can open in Excel or Google Sheets">⬇ Export CSV</button>
       <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a JSON file exported via 'Export JSON' — dictionary is applied automatically">⬇ Import JSON<input type="file" accept=".json" onchange="importResultsJSON(event)" style="display:none"/></label>
       <button class="btn btn-light btn-sm" id="aiReviewBtn" onclick="runAIReview()" style="display:none" title="Send all current results to Claude for AI-powered validation — distinguishes genuine typos from technical terms using KB knowledge">🤖 AI Review</button>
+      <label class="btn btn-light btn-sm" id="importVerdictsBtn" style="display:none;cursor:pointer" title="Import the AI verdicts JSON that Claude responded with — applies verdict badges to all results">⬇ Import Verdicts<input type="file" accept=".json,.txt" onchange="importAIVerdicts(event)" style="display:none"/></label>
+      <button class="btn btn-light btn-sm" id="teamLoadBtn" onclick="loadTeamScan()" style="display:none" title="Load the shared team scan from the GitHub repo — everyone sees the same results">🌐 Load Team Results</button>
+      <button class="btn btn-light btn-sm" id="teamPublishBtn" onclick="publishTeamResults()" style="display:none" title="Publish current results to GitHub so all teammates see them — requires a GitHub PAT">📤 Publish to Team</button>
+      <span id="teamSyncBadge" style="display:none;font-size:11px;padding:3px 8px;background:#f0fff4;color:#16a34a;border-radius:10px;border:1px solid #bbf7d0;"></span>
       <span id="spellIdleNote" style="font-size:12px;color:#aaa">Scans all published articles — no setup needed.</span>
     </div>
 
@@ -500,6 +514,19 @@
 const LANGUAGETOOL_URL = "https://api.languagetool.org/v2/check";
 const LT_DELAY_MS      = 300;   // ms between article requests (rate-limit safe)
 const ZENDESK_ARTICLES = "https://appsflyer.zendesk.com/api/v2/help_center/en-us/articles.json";
+
+// ── Shared team state (GitHub-hosted JSON files in the same repo) ────────────
+// These files live in the repo root. When Bar commits an updated version,
+// everyone who opens the page automatically gets the latest data.
+const GITHUB_OWNER     = "barsm-appsflyer";
+const GITHUB_REPO      = "kb-auditor";
+const GITHUB_BRANCH    = "main";
+const TEAM_SCAN_URL    = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-scan.json`;
+const TEAM_DICT_URL    = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-dictionary.json`;
+const TEAM_FIXED_URL   = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-fixed.json`;
+// GitHub API for direct pushes (requires a PAT stored by the user)
+const GITHUB_API_BASE  = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents`;
+const GH_TOKEN_KEY     = "kbAuditorGHToken"; // localStorage key for PAT
 const ZENDESK_SEARCH   = "https://appsflyer.zendesk.com/api/v2/help_center/articles/search.json";
 
 // Built-in words that are intentional in AppsFlyer docs — not spelling mistakes
@@ -583,6 +610,14 @@ const BUILTIN_IGNORED = [
   // Standards bodies & protocol identifiers
   "ietf","iana","w3c","iso","ieee","owasp","nist","fido","webauthn","openid",
   "scim","urn","mailto","ftp","sftp","ldaps","ldap","msal","pkce","jwks","pem",
+  // Firebase / Google Mobile Services package name fragments
+  // These appear as bare words after HTML stripping of e.g. com.google.firebase.cloudmessaging
+  "cloudmessaging","crashlytics","firebaseapp","googleservices","playstoreapp",
+  "appsflyerlib","appsflyersdk","appsflyerconversionlistener",
+  "appsflyer","installreferrer","referrerdetails","referrerclient",
+  "activitythread","appcompatactivity","mainactivity","myapplication",
+  "applicationcontext","packagemanager","packageinfo","activityinfo",
+  "broadcastreceiver","intentfilter","pendingintent","contentprovider",
   // Example / placeholder app identifiers used in SDK docs
   // (e.g. "com.coolcompany.coolapp", "com.yourcompany.yourapp")
   "coolcompany","coolapp","yourcompany","yourapp","myapp","sampleapp","exampleapp",
@@ -1131,7 +1166,7 @@ function markFixed(key, row) {
 // Spell table helpers
 function setSpellHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>Owner</th><th>Action</th>`;
+    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>AI</th><th>Owner</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display = "none";
   showOwnerFilterBar();
@@ -1147,22 +1182,32 @@ function appendSpellRow(m) {
   const owner = getArticleOwner(m.article_title, m.article_url);
   const ownerClass = owner === "Ilana" ? "owner-ilana" : owner === "Dori" ? "owner-dori" : owner === "Elliot" ? "owner-elliot" : "owner-unknown";
 
+  // AI verdict cell
+  const v = m.aiVerdict;
+  const verdictHtml = !v ? `<span style="font-size:11px;color:#bbb">—</span>` :
+    v === "genuine"      ? `<span class="verdict-badge verdict-genuine">⚠️ Fix it</span>` :
+    v === "false_positive" ? `<span class="verdict-badge verdict-falsepos">✓ Skip</span>` :
+    v === "add_to_dict"  ? `<span class="verdict-badge verdict-falsepos">📚 Dict</span>` :
+    `<span class="verdict-badge verdict-uncertain">? Review</span>`;
+
   const tr = document.createElement("tr");
   tr.dataset.filter = "issues";
   tr.dataset.word = word.toLowerCase();
+  if (v === "false_positive" || v === "add_to_dict") tr.style.opacity = "0.6";
   tr.innerHTML = `
     <td class="art-title">${escHtml(m.article_title || "—")}</td>
     <td class="art-url"><a href="${escHtml(m.article_url || "#")}" target="_blank">↗ Open</a></td>
     <td><span class="misspelled"><span class="wrong">${escHtml(word)}</span></span></td>
     <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
     <td class="context-cell">${contextHtml}</td>
+    <td title="${escHtml(m.aiReason||'')}" style="cursor:${m.aiReason?'help':'default'}">${verdictHtml}</td>
     <td>${ownerBadgeHtml(owner)}</td>
     <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
       ${alreadyIgnored
         ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
         : `<button class="btn btn-light btn-sm dict-add-btn" onclick="addWordFromSpellRow('${escHtml(word.toLowerCase())}', this)" title="Add '${escHtml(word)}' to your dictionary so it won't show up next time">+ Dictionary</button>`
       }
-      <button class="btn btn-sm btn-fix" onclick="openFixByIdx(this)" data-fix-type="spell" data-fix-title="${escHtml(m.article_title||'')}" data-fix-url="${escHtml(m.article_url||'')}" data-fix-word="${escHtml(word)}" data-fix-correction="${escHtml(m.correction||'')}" data-fix-context="${escHtml((m.context||'').substring(0,200))}" title="Open the guided Fix wizard — walks you through reviewing the article and generates a Claude af-kb-pipeline prompt">✏️ Fix</button>
+      <button class="btn btn-sm btn-fix" onclick="openFixByIdx(this)" data-fix-type="spell" data-fix-title="${escHtml(m.article_title||'')}" data-fix-url="${escHtml(m.article_url||'')}" data-fix-word="${escHtml(word)}" data-fix-correction="${escHtml(m.correction||'')}" data-fix-context="${escHtml((m.context||'').substring(0,200))}" data-fix-verdict="${escHtml(v||'')}" data-fix-reason="${escHtml(m.aiReason||'')}" title="Open the guided Fix wizard — walks you through reviewing the article and generates a Claude af-kb-pipeline prompt">✏️ Fix</button>
       <button class="btn btn-sm btn-fixed" onclick="markFixed('${escHtml(fixKey)}', this.closest('tr'))" title="Mark as fixed — hides this row permanently">✓ Fixed</button>
     </td>
   `;
@@ -1716,9 +1761,10 @@ function loadCachedScan() {
     renderSpellSummary(spellCheckedCount, spellResults.length, 0);
     const hasSpell = spellResults.length > 0;
     setSpellCsvBtn(hasSpell);
-    if (hasSpell) document.getElementById("refreshResultsBtn").style.display = "inline-block";
-    if (hasSpell) document.getElementById("shareExportBtn").style.display    = "inline-block";
-    if (hasSpell) document.getElementById("aiReviewBtn").style.display       = "inline-block";
+    if (hasSpell) document.getElementById("refreshResultsBtn").style.display    = "inline-block";
+    if (hasSpell) document.getElementById("shareExportBtn").style.display       = "inline-block";
+    if (hasSpell) document.getElementById("aiReviewBtn").style.display          = "inline-block";
+    if (hasSpell) document.getElementById("importVerdictsBtn").style.display    = "inline-block";
     const d = new Date(cache.ts);
     const dictNote = removed > 0 ? ` (${removed} filtered out by your dictionary)` : "";
     setStatus(`Loaded cached scan from ${d.toLocaleString()} — ${spellCheckedCount} articles, ${spellResults.length} issues${dictNote}.`);
@@ -1767,9 +1813,10 @@ function importResultsJSON(event) {
       renderSpellSummary(checked, spellResults.length, 0);
       const hasResults = spellResults.length > 0;
       setSpellCsvBtn(hasResults);
-      if (hasResults) document.getElementById("refreshResultsBtn").style.display = "inline-block";
-      document.getElementById("shareExportBtn").style.display = "inline-block";
-      if (hasResults) document.getElementById("aiReviewBtn").style.display    = "inline-block";
+      if (hasResults) document.getElementById("refreshResultsBtn").style.display    = "inline-block";
+      document.getElementById("shareExportBtn").style.display                       = "inline-block";
+      if (hasResults) document.getElementById("aiReviewBtn").style.display          = "inline-block";
+      if (hasResults) document.getElementById("importVerdictsBtn").style.display    = "inline-block";
       document.getElementById("progressCard").classList.remove("visible");
 
       const d = new Date(payload.scannedAt);
@@ -1791,8 +1838,73 @@ function importResultsJSON(event) {
 
 // Also show share button when scan completes
 function showShareBtn() {
-  document.getElementById("shareExportBtn").style.display = "inline-block";
-  document.getElementById("aiReviewBtn").style.display    = "inline-block";
+  document.getElementById("shareExportBtn").style.display    = "inline-block";
+  document.getElementById("aiReviewBtn").style.display       = "inline-block";
+  document.getElementById("importVerdictsBtn").style.display = "inline-block";
+}
+
+// ── Import AI Verdicts JSON ───────────────────────────────────────────────────
+// Accepts the JSON block Claude outputs after AI Review — applies verdict + reason
+// to every matching result, re-renders the table, and saves to cache.
+function importAIVerdicts(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      let text = e.target.result.trim();
+      // Strip markdown code fences if pasted as a .txt
+      text = text.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+      // Also support pasting the full Claude response — extract the JSON block
+      const jsonMatch = text.match(/\{[\s\S]*"verdicts"[\s\S]*\}/);
+      if (jsonMatch) text = jsonMatch[0];
+      const payload = JSON.parse(text);
+      if (!payload.verdicts || typeof payload.verdicts !== "object") throw new Error("Missing 'verdicts' key");
+
+      const verdicts = payload.verdicts;
+      let applied = 0;
+      let autoDict = [];
+
+      // Apply verdicts to all results in memory
+      for (const r of spellResults) {
+        const key = (r.word || "").toLowerCase();
+        const v = verdicts[key] || verdicts[r.word] || null;
+        if (v) {
+          r.aiVerdict = v.verdict;
+          r.aiReason  = v.reason || "";
+          applied++;
+          if (v.verdict === "false_positive" || v.verdict === "add_to_dict") {
+            autoDict.push(key);
+          }
+        }
+      }
+
+      // Optionally bulk-add confirmed false positives to the custom dictionary
+      if (autoDict.length > 0) {
+        const custom = loadCustomWords();
+        let added = 0;
+        for (const w of autoDict) {
+          if (!custom.includes(w) && !BUILTIN_IGNORED.includes(w)) { custom.push(w); added++; }
+        }
+        if (added > 0) { saveCustomWords(custom); IGNORED_WORDS = buildIgnoreSet(); }
+      }
+
+      // Save updated results to cache
+      saveScanCache(spellResults, spellCheckedCount);
+
+      // Re-render the table
+      resetResults();
+      setSpellHeaders();
+      spellResults.forEach(m => appendSpellRow(m));
+      renderSpellSummary(spellCheckedCount, spellResults.length, 0);
+      setStatus(`✅ AI verdicts applied to ${applied} results. ${autoDict.length} false positives auto-added to dictionary.`);
+
+    } catch(err) {
+      setStatus("⚠️ Could not parse AI verdicts file: " + err.message + ". Make sure you saved Claude's JSON response as a .json or .txt file.");
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = ""; // reset so same file can be re-imported
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1823,23 +1935,30 @@ function runAIReview() {
 
   const prompt = `I'm running the KB Auditor on the AppsFlyer Help Center. LanguageTool flagged these ${unique.length} unique words as potential spelling mistakes across ${spellResults.length} article instances.
 
-Using your knowledge of AppsFlyer products, the Help Center, and technical terminology, please validate each one:
+Please validate each one using:
+1. The **af-kb-search skill** — search the KB to see if a word appears legitimately in other articles
+2. Your knowledge of **AppsFlyer products, SDK terms, partner names, and technical identifiers**
 
-- **GENUINE ERROR** — it's an actual typo or mistake that should be fixed in the article
-- **FALSE POSITIVE** — it's a legitimate technical term, product name, identifier, placeholder, or abbreviation that should be added to the ignore dictionary
+For each word, assign one of:
+- **genuine** — real typo or spelling error that should be fixed in the article
+- **false_positive** — legitimate technical term / product name / identifier / placeholder (add to dictionary)
+- **uncertain** — not clear, needs human review
 
 ${lines}
 
-Please respond in this exact format so I can process it:
+Respond ONLY with a JSON block in this exact format so I can import the verdicts back into the auditor:
 
-GENUINE_ERRORS:
-- "word" (reason)
+\`\`\`json
+{
+  "verdicts": {
+    "word1": {"verdict": "genuine", "reason": "one sentence"},
+    "word2": {"verdict": "false_positive", "reason": "one sentence"},
+    "word3": {"verdict": "uncertain", "reason": "one sentence"}
+  }
+}
+\`\`\`
 
-ADD_TO_DICTIONARY:
-- "word" (reason)
-
-NEEDS_CONTEXT:
-- "word" (what additional context would help decide)`;
+After the JSON, briefly summarize how many are genuine errors, false positives, and uncertain.`;
 
   // If running in a Cowork session, send directly to Claude chat
   if (typeof window.sendPrompt === "function") {
@@ -2471,6 +2590,7 @@ updateCacheButton();
 updateLinkCacheButton();
 renderDictPanel();
 syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not running in GAS)
+initTeamSync();         // fetch shared team scan + dictionary from GitHub repo
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2482,11 +2602,13 @@ function openFixByIdx(btn) {
   const type = btn.dataset.fixType;
   if (type === "spell") {
     openFixModal("spell", {
-      article_title: btn.dataset.fixTitle || "",
-      article_url:   btn.dataset.fixUrl   || "",
-      word:          btn.dataset.fixWord  || "",
+      article_title: btn.dataset.fixTitle    || "",
+      article_url:   btn.dataset.fixUrl      || "",
+      word:          btn.dataset.fixWord     || "",
       correction:    btn.dataset.fixCorrection || "",
-      context:       btn.dataset.fixContext || ""
+      context:       btn.dataset.fixContext  || "",
+      aiVerdict:     btn.dataset.fixVerdict  || "",
+      aiReason:      btn.dataset.fixReason   || ""
     });
   } else {
     openFixModal("link", {
@@ -2529,6 +2651,68 @@ function closeFixModal() {
   _fixData = null;
 }
 
+// ── AI Verdict banner shown at top of Fix modal ──────────────────────────────
+function buildVerdictBanner(d) {
+  if (!d.aiVerdict) {
+    // No verdict yet — offer to validate right now via sendPrompt
+    return `<div class="fm-verdict-banner" style="background:#f8f9fa;border:1.5px solid #e8e8ed;color:#555;">
+      <span style="font-size:18px">🤖</span>
+      <div>
+        <strong>AI verdict not yet available for this word.</strong>
+        <div style="margin-top:4px">
+          Click <strong>"Ask AI to Validate"</strong> to have Claude search the KB and confirm whether this is a real error or a technical term.
+          ${typeof window.sendPrompt === 'function'
+            ? `<button onclick="askAIValidateSingle('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" style="margin-left:8px" class="btn btn-sm btn-light">🔍 Ask AI to Validate</button>`
+            : `<button onclick="copyValidateSinglePrompt('${escHtml(d.word)}','${escHtml(d.correction)}','${escHtml((d.context||'').substring(0,150))}')" style="margin-left:8px" class="btn btn-sm btn-light">📋 Copy validate prompt</button>`
+          }
+        </div>
+      </div>
+    </div>`;
+  }
+  if (d.aiVerdict === "genuine") {
+    return `<div class="fm-verdict-banner fm-verdict-genuine">
+      <span style="font-size:18px">⚠️</span>
+      <div><strong>AI confirmed: This is a real spelling error.</strong>${d.aiReason ? `<div style="margin-top:3px;font-size:12px">${escHtml(d.aiReason)}</div>` : ''}</div>
+    </div>`;
+  }
+  if (d.aiVerdict === "false_positive" || d.aiVerdict === "add_to_dict") {
+    return `<div class="fm-verdict-banner fm-verdict-falsepos">
+      <span style="font-size:18px">✅</span>
+      <div>
+        <strong>AI says: Likely a false positive — not a real error.</strong>
+        ${d.aiReason ? `<div style="margin-top:3px;font-size:12px">${escHtml(d.aiReason)}</div>` : ''}
+        <div style="margin-top:6px;font-size:12px">Consider adding <strong>"${escHtml(d.word)}"</strong> to your dictionary instead of fixing the article.</div>
+      </div>
+    </div>`;
+  }
+  // uncertain
+  return `<div class="fm-verdict-banner fm-verdict-uncertain">
+    <span style="font-size:18px">🟡</span>
+    <div><strong>AI is uncertain about this word — verify manually.</strong>${d.aiReason ? `<div style="margin-top:3px;font-size:12px">${escHtml(d.aiReason)}</div>` : ''}</div>
+  </div>`;
+}
+
+function askAIValidateSingle(word, correction, ctx) {
+  if (typeof window.sendPrompt !== 'function') return;
+  const prompt = `Please validate this KB spell-check result using the af-kb-search skill and your knowledge of AppsFlyer products:
+
+Word flagged: "${word}"
+Suggested correction: "${correction}"
+Context: "...${ctx}..."
+
+Is this a genuine spelling error in the article, or is it a legitimate technical term / product name / identifier that should be added to the ignore dictionary?
+
+Search the KB for "${word}" to see if it appears legitimately in other articles. Then respond with:
+- VERDICT: genuine / false_positive / uncertain
+- REASON: one sentence explaining why`;
+  window.sendPrompt(prompt);
+}
+
+function copyValidateSinglePrompt(word, correction, ctx) {
+  const prompt = `Please validate this KB spell-check result using your knowledge of AppsFlyer products:\n\nWord flagged: "${word}"\nSuggested correction: "${correction}"\nContext: "...${ctx}..."\n\nIs this a genuine error or a legitimate technical term?`;
+  navigator.clipboard.writeText(prompt).catch(()=>{});
+}
+
 // ── Spell Fix Modal ──────────────────────────────────────────────────────────
 function buildSpellModal(d) {
   const artId = extractArticleId(d.article_url);
@@ -2539,6 +2723,7 @@ function buildSpellModal(d) {
     <button class="fm-close" onclick="closeFixModal()">✕</button>
   </div>
   <div class="fm-body">
+    ${buildVerdictBanner(d)}
     <p style="margin:0 0 16px;font-size:13px;color:#555;">This wizard will guide you through the <strong>af-kb-pipeline safety checks</strong> and generate a ready-to-use Claude prompt to fix this article.</p>
 
     <!-- Step 1: Review the article -->
@@ -2818,6 +3003,181 @@ function copyAndOpenClaude(type) {
 document.getElementById("fixModal").addEventListener("click", function(e) {
   if (e.target === this) closeFixModal();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TEAM SYNC — shared scan + dictionary stored as JSON files in the GitHub repo
+//  Everyone who opens the page gets the same results, dictionary, and verdicts.
+//  Admin (Bar) pushes updates via the GitHub API using a stored PAT.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function initTeamSync() {
+  // 1. Try to load the team dictionary first (small file, always apply)
+  try {
+    const resp = await fetch(TEAM_DICT_URL + "?_=" + Date.now());
+    if (resp.ok) {
+      const data = await resp.json();
+      const teamWords = (data.words || []).map(w => w.toLowerCase());
+      // Merge into custom dictionary without duplicates
+      const custom = loadCustomWords();
+      let added = 0;
+      for (const w of teamWords) {
+        if (!custom.includes(w) && !BUILTIN_IGNORED.includes(w)) { custom.push(w); added++; }
+      }
+      if (added > 0) { saveCustomWords(custom); IGNORED_WORDS = buildIgnoreSet(); }
+    }
+  } catch(e) { /* dictionary fetch failed — silently skip */ }
+
+  // 2. Try to load the team fixed-items list
+  try {
+    const resp = await fetch(TEAM_FIXED_URL + "?_=" + Date.now());
+    if (resp.ok) {
+      const data = await resp.json();
+      const fixedSet = loadFixedItems();
+      for (const k of (data.fixed || [])) fixedSet.add(k);
+      saveFixedItems(fixedSet);
+      FIXED_ITEMS = fixedSet;
+    }
+  } catch(e) { /* silently skip */ }
+
+  // 3. Check if a team scan file exists and show the "Load Team Results" button
+  try {
+    const resp = await fetch(TEAM_SCAN_URL + "?_=" + Date.now(), { method: "HEAD" });
+    if (resp.ok) {
+      const btn = document.getElementById("teamLoadBtn");
+      if (btn) btn.style.display = "inline-block";
+      // If no local scan is cached yet, load the team scan automatically
+      const hasLocal = !!localStorage.getItem("kbSpellCache");
+      if (!hasLocal) loadTeamScan();
+    }
+  } catch(e) { /* no team scan yet — that's fine */ }
+}
+
+async function loadTeamScan() {
+  setStatus("Loading shared team results from GitHub…");
+  try {
+    const resp = await fetch(TEAM_SCAN_URL + "?_=" + Date.now());
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const payload = await resp.json();
+    if (!payload.results || !Array.isArray(payload.results)) throw new Error("Invalid team scan format");
+
+    const checked = payload.checkedCount || payload.results.length;
+    spellCheckedCount = checked;
+    IGNORED_WORDS = buildIgnoreSet();
+    spellResults = payload.results.filter(m => {
+      if (IGNORED_WORDS.has((m.word || "").toLowerCase())) return false;
+      const fixKey = `spell|${m.article_url}|${(m.word||"").toLowerCase()}`;
+      return !FIXED_ITEMS.has(fixKey);
+    });
+
+    resetResults();
+    setSpellHeaders();
+    spellResults.forEach(m => appendSpellRow(m));
+    renderSpellSummary(checked, spellResults.length, 0);
+    setSpellCsvBtn(spellResults.length > 0);
+    const hasResults = spellResults.length > 0;
+    ["shareExportBtn","refreshResultsBtn","aiReviewBtn","importVerdictsBtn","teamPublishBtn"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && hasResults) el.style.display = "inline-block";
+    });
+
+    const d = new Date(payload.scannedAt || payload.ts || Date.now());
+    const badge = document.getElementById("teamSyncBadge");
+    if (badge) { badge.style.display = "inline-block"; badge.textContent = `🌐 Team scan from ${d.toLocaleDateString()}`; }
+    setStatus(`Loaded shared team scan from ${d.toLocaleString()} — ${checked} articles, ${spellResults.length} issues open.`);
+
+    // Also save to local cache for faster reload next time
+    saveScanCache(spellResults, checked);
+  } catch(e) {
+    setStatus("Could not load team results: " + e.message);
+  }
+}
+
+async function publishTeamResults() {
+  if (!spellResults.length) { alert("No results to publish. Run a scan first."); return; }
+
+  // Get or prompt for GitHub PAT
+  let token = localStorage.getItem(GH_TOKEN_KEY) || "";
+  if (!token) {
+    token = prompt(
+      "Enter your GitHub Personal Access Token (PAT) with repo write access.\n\n" +
+      "Create one at: github.com/settings/tokens\n" +
+      "Required scope: repo (or Contents: write for fine-grained tokens)\n\n" +
+      "Your token will be saved in this browser only — never shared."
+    );
+    if (!token) return;
+    localStorage.setItem(GH_TOKEN_KEY, token.trim());
+    token = token.trim();
+  }
+
+  const btn = document.getElementById("teamPublishBtn");
+  if (btn) { btn.textContent = "⏳ Publishing…"; btn.disabled = true; }
+
+  try {
+    // Build the three payloads
+    const scanPayload = {
+      scannedAt: new Date().toISOString(),
+      checkedCount: spellCheckedCount,
+      results: spellResults
+    };
+    const dictPayload = { words: loadCustomWords() };
+    const fixedPayload = { fixed: [...loadFixedItems()] };
+
+    // Push all three files to GitHub
+    await pushFileToGitHub(token, "team-scan.json",       JSON.stringify(scanPayload, null, 2),  "Update team scan results");
+    await pushFileToGitHub(token, "team-dictionary.json", JSON.stringify(dictPayload, null, 2),  "Update shared dictionary");
+    await pushFileToGitHub(token, "team-fixed.json",      JSON.stringify(fixedPayload, null, 2), "Update fixed items list");
+
+    if (btn) { btn.textContent = "✅ Published!"; btn.disabled = false; }
+    setTimeout(() => { if (btn) btn.textContent = "📤 Publish to Team"; }, 3000);
+
+    const badge = document.getElementById("teamSyncBadge");
+    if (badge) { badge.style.display = "inline-block"; badge.textContent = `🌐 Published ${new Date().toLocaleTimeString()}`; }
+    setStatus(`✅ Team results published to GitHub — all teammates will see the updated scan when they next open the page.`);
+
+  } catch(e) {
+    if (btn) { btn.textContent = "❌ Failed — check token"; btn.disabled = false; }
+    setTimeout(() => { if (btn) btn.textContent = "📤 Publish to Team"; }, 4000);
+    if (e.message.includes("401") || e.message.includes("403")) {
+      if (confirm("Authentication failed. Your token may be invalid or expired.\n\nClear it and try again?")) {
+        localStorage.removeItem(GH_TOKEN_KEY);
+      }
+    } else {
+      setStatus("Publish failed: " + e.message);
+    }
+  }
+}
+
+async function pushFileToGitHub(token, filename, content, commitMessage) {
+  const url = `${GITHUB_API_BASE}/${filename}`;
+  // Get the current file SHA if it exists (required for updates)
+  let sha = null;
+  try {
+    const getResp = await fetch(url, { headers: { Authorization: `token ${token}`, Accept: "application/vnd.github.v3+json" } });
+    if (getResp.ok) { const j = await getResp.json(); sha = j.sha; }
+  } catch(e) {}
+
+  const body = { message: commitMessage, content: btoa(unescape(encodeURIComponent(content))), branch: GITHUB_BRANCH };
+  if (sha) body.sha = sha;
+
+  const resp = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `token ${token}`, "Content-Type": "application/json", Accept: "application/vnd.github.v3+json" },
+    body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`GitHub API ${resp.status}: ${err.message || resp.statusText}`);
+  }
+  return resp.json();
+}
+
+// Expose loadFixedItems / saveFixedItems for team sync (if not already defined above)
+function loadFixedItems() {
+  try { return new Set(JSON.parse(localStorage.getItem("kbSpellFixed") || "[]")); } catch(e) { return new Set(); }
+}
+function saveFixedItems(set) {
+  try { localStorage.setItem("kbSpellFixed", JSON.stringify([...set])); } catch(e) {}
+}
 
 </script>
 

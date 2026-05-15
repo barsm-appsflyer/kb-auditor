@@ -39,7 +39,7 @@
       window._fixedSet = new Set(data.keys || []);
       if (typeof FIXED_ITEMS !== 'undefined') FIXED_ITEMS = window._fixedSet;
       // Auto-hide rows marked fixed by another user
-      document.querySelectorAll('#resultsBody tr, #spellBody tr').forEach(row => {
+      document.querySelectorAll('#resultsBody tr').forEach(row => {
         const btn = row.querySelector('.btn-fixed');
         if (!btn) return;
         const key = btn.getAttribute('onclick')?.match(/markFixed\('([^']+)'/)?.[1];
@@ -54,7 +54,16 @@
     // ── Owner overrides ───────────────────────────────────────────────────────
     OWNERS_DOC.onSnapshot(snap => {
       const data = (snap && snap.exists) ? snap.data() : {};
-      window._ownerOverrides = data.overrides || {};
+      const serverOverrides = data.overrides || {};
+      // Load localStorage backup (survives Firebase failures)
+      let localBackup = {};
+      try { localBackup = JSON.parse(localStorage.getItem('kbOwnerOverrides') || '{}'); } catch(e) {}
+      // Merge: local fills gaps, server wins on conflicts (source of truth for team sync)
+      window._ownerOverrides = Object.assign({}, localBackup, serverOverrides);
+      // Keep localStorage in sync with server when Firebase is working
+      if (Object.keys(serverOverrides).length > 0) {
+        try { localStorage.setItem('kbOwnerOverrides', JSON.stringify(window._ownerOverrides)); } catch(e) {}
+      }
       document.querySelectorAll('[data-article-url]').forEach(badge => {
         const url = badge.dataset.articleUrl;
         if (url && window._ownerOverrides[url]) {
@@ -125,6 +134,7 @@
     }
     function fbSaveOwnerOverride(articleUrl, ownerName) {
       window._ownerOverrides[articleUrl] = ownerName;
+      try { localStorage.setItem('kbOwnerOverrides', JSON.stringify(window._ownerOverrides)); } catch(e) {}
       OWNERS_DOC.set({ overrides: window._ownerOverrides }).catch(console.error);
     }
     function fbSaveDictionary(words) {
@@ -1906,7 +1916,7 @@ function loadCachedScan() {
     spellResults.forEach(m => appendSpellRow(m));
     // Hide rows already marked fixed by any user
     if (window._fixedSet && window._fixedSet.size > 0) {
-      document.querySelectorAll('#spellBody tr').forEach(row => {
+      document.querySelectorAll('#resultsBody tr').forEach(row => {
         const btn = row.querySelector('.btn-fixed');
         if (!btn) return;
         const key = btn.getAttribute('onclick')?.match(/markFixed\('([^']+)'/)?.[1];

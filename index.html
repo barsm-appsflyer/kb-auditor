@@ -481,6 +481,15 @@
 
     <div id="consistencySummary" style="font-size:13px;color:#666;margin-bottom:12px;min-height:20px;"></div>
 
+    <div class="owner-filter-bar" id="consistencyOwnerFilterBar" style="display:none;margin-bottom:8px;border-radius:6px;">
+      <span class="of-label">👤 Owner:</span>
+      <button class="owner-filter-btn active" data-owner="All" onclick="filterByOwner('All',this)">All</button>
+      <button class="owner-filter-btn of-dori"   data-owner="Dori"   onclick="filterByOwner('Dori',this)">Dori</button>
+      <button class="owner-filter-btn of-ilana"  data-owner="Ilana"  onclick="filterByOwner('Ilana',this)">Ilana</button>
+      <button class="owner-filter-btn of-elliot" data-owner="Elliot" onclick="filterByOwner('Elliot',this)">Elliot</button>
+      <button class="owner-filter-btn" data-owner="—" onclick="filterByOwner('—',this)">Unassigned</button>
+    </div>
+
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
@@ -1120,6 +1129,8 @@ function filterByOwner(owner, btn) {
 function showOwnerFilterBar() {
   const bar = document.getElementById("ownerFilterBar");
   if (bar) bar.style.display = "flex";
+  const cbar = document.getElementById("consistencyOwnerFilterBar");
+  if (cbar) cbar.style.display = "flex";
   // Auto-apply hash filter if present
   const hash = window.location.hash;
   const m = hash.match(/#owner=(.+)/);
@@ -1128,10 +1139,11 @@ function showOwnerFilterBar() {
 
 function resetOwnerFilter() {
   document.querySelectorAll(".owner-filter-btn").forEach(b => b.classList.remove("active"));
-  const allBtn = document.querySelector(".owner-filter-btn[data-owner='All']");
-  if (allBtn) allBtn.classList.add("active");
+  document.querySelectorAll(".owner-filter-btn[data-owner='All']").forEach(b => b.classList.add("active"));
   const bar = document.getElementById("ownerFilterBar");
   if (bar) bar.style.display = "none";
+  const cbar = document.getElementById("consistencyOwnerFilterBar");
+  if (cbar) cbar.style.display = "none";
 }
 
 // ─── Owner badge + inline picker ───────────────────────────────────────────

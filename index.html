@@ -462,6 +462,11 @@
     <div class="scan-controls">
       <button id="consistencyBtn" class="btn btn-primary" onclick="runConsistencyScan()">🔍 Scan for Missing References</button>
       <button class="btn btn-light btn-sm" id="loadConsistencyCacheBtn" onclick="loadConsistencyCache()" style="display:none" title="Reload results from your last scan — no need to re-scan">📂 Load Last Scan (<span id="consistencyCacheDateLabel"></span>)</button>
+      <button class="btn btn-light btn-sm" id="consistencyExportJsonBtn" onclick="exportConsistencyJSON()" style="display:none" title="Export gaps as a JSON file">⬆ Export JSON</button>
+      <button class="btn btn-light btn-sm" id="consistencyExportCsvBtn" onclick="exportConsistencyCSV()" style="display:none" title="Download gaps as a CSV file">⬇ Export CSV</button>
+      <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a previously exported JSON file">⬇ Import JSON<input type="file" accept=".json" onchange="importConsistencyJSON(event)" style="display:none"/></label>
+      <button class="btn btn-light btn-sm" id="consistencyTeamLoadBtn" onclick="loadTeamConsistency()" style="display:none" title="Load the shared team consistency scan from GitHub">🌐 Load Team Results</button>
+      <button class="btn btn-light btn-sm" id="consistencyTeamPublishBtn" onclick="publishTeamConsistency()" style="display:none" title="Publish current consistency gaps to GitHub — requires a GitHub PAT">📤 Publish to Team</button>
       <button class="btn btn-ghost btn-sm" onclick="resetConsistencyDismissed()" title="Show all gaps including reviewed ones" id="consistencyResetBtn" style="display:none;">↩ Show reviewed (<span id="consistencyDismissedCount">0</span>)</button>
     </div>
 
@@ -480,14 +485,15 @@
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
           <tr style="background:#f5f5f7;border-bottom:1.5px solid #e0e0e5;">
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:22%;">Article</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:44%;">Issue</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:18%;">Section</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:16%;">Action</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:20%;">Article</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:42%;">Issue</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:16%;">Section</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:10%;">Owner</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:12%;">Action</th>
           </tr>
         </thead>
         <tbody id="consistencyTbody">
-          <tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">Run a scan to find missing references</td></tr>
+          <tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">Run a scan to find missing references</td></tr>
         </tbody>
       </table>
     </div>
@@ -550,6 +556,7 @@ const GITHUB_BRANCH    = "main";
 const TEAM_SCAN_URL    = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-scan.json`;
 const TEAM_DICT_URL    = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-dictionary.json`;
 const TEAM_FIXED_URL   = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-fixed.json`;
+const TEAM_CONSISTENCY_URL = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/team-consistency.json`;
 // GitHub API for direct pushes (requires a PAT stored by the user)
 const GITHUB_API_BASE  = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents`;
 const GH_TOKEN_KEY     = "kbAuditorGHToken"; // localStorage key for PAT
@@ -1101,6 +1108,10 @@ function filterByOwner(owner, btn) {
     const badge = tr.querySelector(".owner-badge");
     const rowOwner = badge ? badge.textContent.trim().replace(/\s*▾$/, "") : "—";
     tr.style.display = (rowOwner === owner) ? "" : "none";
+  });
+  document.querySelectorAll("#consistencyTbody tr[data-owner]").forEach(tr => {
+    if (owner === "All") { tr.style.display = ""; return; }
+    tr.style.display = (tr.dataset.owner === owner) ? "" : "none";
   });
 }
 
@@ -2624,7 +2635,8 @@ updateLinkCacheButton();
 updateConsistencyCacheButton();
 renderDictPanel();
 syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not running in GAS)
-initTeamSync();         // fetch shared team scan + dictionary from GitHub repo
+initTeamSync();
+initConsistencySync();  // check for cached consistency scan + team file         // fetch shared team scan + dictionary from GitHub repo
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TEAM SYNC — shared scan + dictionary stored as JSON files in the GitHub repo
@@ -2918,7 +2930,9 @@ async function runConsistencyScan() {
     pct.textContent = '100%';
     sub.textContent = `Done — ${consistencyAllGaps.length} gap${consistencyAllGaps.length !== 1 ? 's' : ''} found in published public articles`;
     saveConsistencyCache();
+    saveCachedConsistency();
     renderConsistencyResults();
+    consistencyShowButtons();
 
   } catch (e) {
     sub.textContent = 'Error: ' + e.message;
@@ -2948,14 +2962,17 @@ function renderConsistencyResults() {
 
   const tbody = document.getElementById('consistencyTbody');
   if (visible.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
     return;
   }
   tbody.innerHTML = '';
   visible.forEach(gap => {
     const key = gap.overviewId + '_' + gap.missingId;
+    const owner = getArticleOwner(gap.missingTitle, `https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}`);
+    const ownerCls = owner === "Dori" ? "owner-dori" : owner === "Ilana" ? "owner-ilana" : owner === "Elliot" ? "owner-elliot" : "owner-unknown";
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid #f0f0f5';
+    tr.dataset.owner = owner;
     tr.innerHTML = `
       <td style="padding:9px 12px;vertical-align:top;">
         <a href="https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}" target="_blank" style="color:#0071e3;font-size:13px;font-weight:500;">${gap.missingTitle}</a>
@@ -2966,12 +2983,15 @@ function renderConsistencyResults() {
         Users who land on the overview will not know this article exists.
       </td>
       <td style="padding:9px 12px;vertical-align:top;font-size:12px;color:#888;">${gap.sectionName}</td>
+      <td style="padding:9px 12px;vertical-align:top;">
+        <span class="owner-badge ${ownerCls}">${owner}</span>
+      </td>
       <td style="padding:9px 12px;vertical-align:top;white-space:nowrap;">
         <button class="btn btn-sm btn-light" onclick="consistencyDismiss('${key}',this)">✓ Reviewed</button>
       </td>`;
     tbody.appendChild(tr);
   });
-}
+  showOwnerFilterBar();
 
 function consistencyDismiss(key, btn) {
   const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));
@@ -2991,7 +3011,7 @@ function consistencyDismiss(key, btn) {
     document.getElementById('consistencyDismissedCount').textContent = reviewedCount;
     if (remaining === 0) {
       document.getElementById('consistencyTbody').innerHTML =
-        '<tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">All gaps reviewed ✓</td></tr>';
+        '<tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">All gaps reviewed ✓</td></tr>';
     }
   }, 300);
 }
@@ -3046,6 +3066,137 @@ function loadFixedItems() {
 }
 function saveFixedItems(set) {
   try { localStorage.setItem("kbSpellFixed", JSON.stringify([...set])); } catch(e) {}
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// CONSISTENCY — cache, export, import, team sync
+// ═══════════════════════════════════════════════════════════════════
+
+function initConsistencySync() {
+  // Show Load Last Scan btn if cache exists
+  const raw = localStorage.getItem('consistencyScanCache');
+  if (raw) {
+    try {
+      const { date } = JSON.parse(raw);
+      const btn = document.getElementById('loadConsistencyCacheBtn') || document.getElementById('consistencyLoadCacheBtn');
+      const lbl = document.getElementById('consistencyCacheDateLabel');
+      if (btn) btn.style.display = 'inline-block';
+      if (lbl) lbl.textContent = date;
+    } catch(e) {}
+  }
+  // Check if team consistency file exists on GitHub
+  fetch(TEAM_CONSISTENCY_URL + "?_=" + Date.now(), { method: "HEAD" })
+    .then(r => { if (r.ok) { const b = document.getElementById("consistencyTeamLoadBtn"); if (b) b.style.display = "inline-block"; } })
+    .catch(() => {});
+}
+
+function saveCachedConsistency() {
+  const cache = { date: new Date().toLocaleString(), gaps: consistencyAllGaps };
+  localStorage.setItem('consistencyScanCache', JSON.stringify(cache));
+  const btn = document.getElementById('loadConsistencyCacheBtn') || document.getElementById('consistencyLoadCacheBtn');
+  const lbl = document.getElementById('consistencyCacheDateLabel');
+  if (btn) btn.style.display = 'inline-block';
+  if (lbl) lbl.textContent = cache.date;
+}
+
+function loadConsistencyCache() {
+  const raw = localStorage.getItem('consistencyScanCache');
+  if (!raw) { alert('No cached consistency scan found.'); return; }
+  try {
+    const { date, gaps } = JSON.parse(raw);
+    consistencyAllGaps = gaps;
+    document.getElementById('consistencyProgress').classList.add('visible');
+    document.getElementById('consistencyProgressPct').textContent = '100%';
+    document.getElementById('consistencyProgressFill').style.width = '100%';
+    document.getElementById('consistencyProgressSub').textContent = `Loaded from cache (${date}) — ${gaps.length} gaps`;
+    renderConsistencyResults();
+    consistencyShowButtons();
+    setStatus(`Loaded consistency scan from cache (${date})`);
+  } catch(e) { alert('Could not load cache: ' + e.message); }
+}
+
+function consistencyShowButtons() {
+  ["consistencyExportJsonBtn","consistencyExportCsvBtn","consistencyTeamPublishBtn"].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = "inline-block";
+  });
+}
+
+function exportConsistencyJSON() {
+  if (!consistencyAllGaps.length) { alert('No data to export. Run a scan first.'); return; }
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), gaps: consistencyAllGaps }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'kb-consistency.json'; a.click();
+}
+
+function exportConsistencyCSV() {
+  if (!consistencyAllGaps.length) { alert('No data to export. Run a scan first.'); return; }
+  const rows = [['Article','Article URL','Section','Overview','Overview URL','Owner']];
+  consistencyAllGaps.forEach(g => {
+    const owner = getArticleOwner(g.missingTitle, `https://support.appsflyer.com/hc/en-us/articles/${g.missingId}`);
+    rows.push([g.missingTitle, `https://support.appsflyer.com/hc/en-us/articles/${g.missingId}`,
+      g.sectionName, g.overviewTitle, `https://support.appsflyer.com/hc/en-us/articles/${g.overviewId}`, owner]);
+  });
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'kb-consistency.csv'; a.click();
+}
+
+function importConsistencyJSON(event) {
+  const file = event.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      consistencyAllGaps = data.gaps || data;
+      renderConsistencyResults();
+      consistencyShowButtons();
+      setStatus(`Imported ${consistencyAllGaps.length} gaps from file.`);
+    } catch(err) { alert('Could not parse JSON: ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+async function loadTeamConsistency() {
+  setStatus("Loading shared team consistency results from GitHub…");
+  try {
+    const resp = await fetch(TEAM_CONSISTENCY_URL + "?_=" + Date.now());
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const payload = await resp.json();
+    if (!payload.gaps || !Array.isArray(payload.gaps)) throw new Error("Invalid format");
+    consistencyAllGaps = payload.gaps;
+    renderConsistencyResults();
+    consistencyShowButtons();
+    const d = new Date(payload.publishedAt || Date.now());
+    setStatus(`Loaded team consistency scan from ${d.toLocaleString()} — ${payload.gaps.length} gaps.`);
+  } catch(e) { setStatus("Could not load team consistency results: " + e.message); }
+}
+
+async function publishTeamConsistency() {
+  if (!consistencyAllGaps.length) { alert("No results to publish. Run a scan first."); return; }
+  let token = localStorage.getItem(GH_TOKEN_KEY) || "";
+  if (!token) {
+    token = prompt("Enter your GitHub Personal Access Token (PAT) with repo write access.\n\nCreate one at: github.com/settings/tokens\nRequired scope: repo\n\nYour token will be saved in this browser only — never shared.");
+    if (!token) return;
+    localStorage.setItem(GH_TOKEN_KEY, token.trim()); token = token.trim();
+  }
+  const btn = document.getElementById("consistencyTeamPublishBtn");
+  if (btn) { btn.textContent = "⏳ Publishing…"; btn.disabled = true; }
+  try {
+    const payload = { publishedAt: new Date().toISOString(), gaps: consistencyAllGaps };
+    await pushFileToGitHub(token, "team-consistency.json", JSON.stringify(payload, null, 2), "Update team consistency gaps");
+    if (btn) { btn.textContent = "✅ Published!"; btn.disabled = false; }
+    setTimeout(() => { if (btn) btn.textContent = "📤 Publish to Team"; }, 3000);
+    setStatus("✅ Consistency gaps published to GitHub — teammates will see them on next load.");
+    const lb = document.getElementById("consistencyTeamLoadBtn"); if (lb) lb.style.display = "inline-block";
+  } catch(e) {
+    if (btn) { btn.textContent = "❌ Failed — check token"; btn.disabled = false; }
+    setTimeout(() => { if (btn) btn.textContent = "📤 Publish to Team"; }, 4000);
+    if (e.message.includes("401") || e.message.includes("403")) {
+      if (confirm("Authentication failed. Clear saved token and try again?")) localStorage.removeItem(GH_TOKEN_KEY);
+    } else { setStatus("Publish failed: " + e.message); }
+  }
 }
 
 </script>

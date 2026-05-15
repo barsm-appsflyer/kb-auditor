@@ -461,6 +461,7 @@
 
     <div class="scan-controls">
       <button id="consistencyBtn" class="btn btn-primary" onclick="runConsistencyScan()">🔍 Scan for Missing References</button>
+      <button class="btn btn-light btn-sm" id="loadConsistencyCacheBtn" onclick="loadConsistencyCache()" style="display:none" title="Reload results from your last scan — no need to re-scan">📂 Load Last Scan (<span id="consistencyCacheDateLabel"></span>)</button>
       <button class="btn btn-ghost btn-sm" onclick="resetConsistencyDismissed()" title="Show all gaps including reviewed ones" id="consistencyResetBtn" style="display:none;">↩ Show reviewed (<span id="consistencyDismissedCount">0</span>)</button>
     </div>
 
@@ -2620,6 +2621,7 @@ function updateLinkCacheButton() {
 // ── Init ────────────────────────────────────────────────────────────────────
 updateCacheButton();
 updateLinkCacheButton();
+updateConsistencyCacheButton();
 renderDictPanel();
 syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not running in GAS)
 initTeamSync();         // fetch shared team scan + dictionary from GitHub repo
@@ -2915,6 +2917,7 @@ async function runConsistencyScan() {
     fill.style.width = '100%';
     pct.textContent = '100%';
     sub.textContent = `Done — ${consistencyAllGaps.length} gap${consistencyAllGaps.length !== 1 ? 's' : ''} found in published public articles`;
+    saveConsistencyCache();
     renderConsistencyResults();
 
   } catch (e) {
@@ -2997,6 +3000,42 @@ function resetConsistencyDismissed() {
   localStorage.removeItem('consistency_dismissed');
   document.getElementById('consistencyResetBtn').style.display = 'none';
   if (consistencyAllGaps.length > 0) renderConsistencyResults();
+}
+
+function saveConsistencyCache() {
+  try {
+    localStorage.setItem('kbConsistencyCache', JSON.stringify({ ts: Date.now(), gaps: consistencyAllGaps }));
+    updateConsistencyCacheButton();
+  } catch(e) {}
+}
+
+function loadConsistencyCache() {
+  try {
+    const raw = localStorage.getItem('kbConsistencyCache');
+    if (!raw) return;
+    const cache = JSON.parse(raw);
+    consistencyAllGaps = cache.gaps || [];
+    renderConsistencyResults();
+    document.getElementById('consistencyProgress').classList.remove('visible');
+    const d = new Date(cache.ts);
+    document.getElementById('consistencySummary').textContent =
+      (document.getElementById('consistencySummary').textContent || '') +
+      ` (loaded from ${d.toLocaleDateString()} ${d.toLocaleTimeString()})`;
+  } catch(e) {
+    alert('Could not load cached scan: ' + e.message);
+  }
+}
+
+function updateConsistencyCacheButton() {
+  try {
+    const raw = localStorage.getItem('kbConsistencyCache');
+    if (!raw) return;
+    const { ts } = JSON.parse(raw);
+    const d = new Date(ts);
+    document.getElementById('consistencyCacheDateLabel').textContent =
+      d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('loadConsistencyCacheBtn').style.display = '';
+  } catch(e) {}
 }
 
 // ═══════════════════════════════════════════════════════════════════

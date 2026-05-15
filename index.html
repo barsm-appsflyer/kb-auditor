@@ -253,6 +253,7 @@
   <div class="mode-tab" onclick="setMode('search',this)" title="Full-text search across the AppsFlyer Knowledge Base">🔍 Search</div>
   <div class="mode-tab" onclick="setMode('dict',this)" title="Manage your custom word list — words here are silently skipped during spell checking">📖 Dictionary</div>
   <div class="mode-tab" onclick="setMode('link',this)" title="Scan all articles for broken, redirected, or unverifiable hyperlinks">🔗 Link Checker</div>
+  <div class="mode-tab" onclick="setMode('consistency',this)" title="Find articles that are missing from their section's overview/guide article">🧩 Consistency</div>
 </div>
 
 <!-- ═══ SPELL CHECK ═══ -->
@@ -445,6 +446,59 @@
       <span class="badge redirect" style="font-size:11px">↪️ Redirect</span> — 301/302, URL may need updating &nbsp;
       <span class="badge unverifiable" style="font-size:11px">⚠️ Unverifiable</span> — server responded but browser can't read status (CORS) &nbsp;
       <span class="badge timeout" style="font-size:11px">⏱️ Timeout</span> — no response within 12 s
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CONSISTENCY CHECKER ═══ -->
+<div class="mode-panel" id="panel-consistency">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>Missing Reference Checker</h2>
+      <p>Scans every section for a guide/overview article, then checks which sibling articles are <strong>not linked</strong> from it. Finds content that users may never discover — like a new "Spoofing" article missing from the Fraud overview.</p>
+      <p style="margin-top:8px;font-size:12px;color:#999;">Uses the public Zendesk API — no auth needed. Scans all sections with 2+ articles.</p>
+    </div>
+
+    <div style="max-width:640px;background:#fff;border:1.5px solid #e0e0e5;border-radius:10px;padding:16px 18px;margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;">📋 Asana Integration <span style="font-weight:400;color:#999;">(optional)</span></div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        <input id="asanaToken" type="password" placeholder="Asana Personal Access Token" class="search-input" style="flex:1;min-width:200px;">
+        <input id="asanaProject" type="text" placeholder="Project GID (optional)" class="search-input" style="width:200px;">
+      </div>
+      <div style="font-size:11px;color:#999;">If token set → creates Asana task directly. Otherwise → copies task text to clipboard.</div>
+    </div>
+
+    <div class="scan-controls">
+      <button id="consistencyBtn" class="btn btn-primary" onclick="runConsistencyScan()">🔍 Scan for Missing References</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetConsistencyDismissed()" title="Clear all reviewed items">Reset reviewed</button>
+    </div>
+
+    <div class="progress-card" id="consistencyProgress">
+      <div class="progress-top">
+        <span class="progress-title">Scanning sections…</span>
+        <span class="progress-pct" id="consistencyProgressPct">0%</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="consistencyProgressFill"></div></div>
+      <div class="progress-sub"><span id="consistencyProgressSub">Starting…</span></div>
+    </div>
+
+    <div id="consistencySummary" style="font-size:13px;color:#666;margin-bottom:12px;min-height:20px;"></div>
+
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#f5f5f7;border-bottom:1.5px solid #e0e0e5;">
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:18%;">Section</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:24%;">Overview Article</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:27%;">Missing Article</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:10%;">Status</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:21%;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="consistencyTbody">
+          <tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">Run a scan to find missing references</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -2746,6 +2800,220 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
   }
   return resp.json();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CONSISTENCY CHECKER — Missing Reference Detection
+// ═══════════════════════════════════════════════════════════════════
+
+const CONSISTENCY_OVERVIEW_KEYWORDS = ['guide', 'overview', 'introduction', 'getting started', 'about ', 'onboarding'];
+const CONSISTENCY_BETA_PATTERNS = [/^\[wip\]/i, /^\[beta\]/i, /^\[closed beta\]/i, /^wip[\s\-]/i];
+let consistencyAllGaps = [];
+
+async function zdFetch(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
+  return res.json();
+}
+
+async function zdGetAllSections() {
+  const sections = [];
+  let url = 'https://support.appsflyer.com/api/v2/help_center/en-us/sections.json?per_page=100';
+  while (url) {
+    const d = await zdFetch(url);
+    sections.push(...d.sections);
+    url = d.next_page || null;
+  }
+  return sections;
+}
+
+async function zdGetSectionArticles(sectionId) {
+  const articles = [];
+  let url = `https://support.appsflyer.com/api/v2/help_center/en-us/sections/${sectionId}/articles.json?per_page=100`;
+  while (url) {
+    const d = await zdFetch(url);
+    articles.push(...d.articles);
+    url = d.next_page || null;
+  }
+  return articles;
+}
+
+async function zdGetArticleBody(articleId) {
+  const d = await zdFetch(`https://support.appsflyer.com/api/v2/help_center/en-us/articles/${articleId}.json`);
+  return d.article.body || '';
+}
+
+function consistencyFindOverview(articles) {
+  const scored = articles.map(a => {
+    const t = a.title.toLowerCase();
+    const isOverview = CONSISTENCY_OVERVIEW_KEYWORDS.some(k => t.includes(k));
+    const hasBracket = /^\[/.test(a.title);
+    return { a, score: (isOverview ? 10 : 0) - (hasBracket ? 5 : 0) };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 0 ? scored[0].a : null;
+}
+
+function consistencyExtractIds(body) {
+  return new Set([...body.matchAll(/\/articles\/(\d+)/g)].map(m => String(m[1])));
+}
+
+function consistencyIsBeta(title) {
+  return CONSISTENCY_BETA_PATTERNS.some(p => p.test(title));
+}
+
+async function runConsistencyScan() {
+  const btn = document.getElementById('consistencyBtn');
+  const progress = document.getElementById('consistencyProgress');
+  const fill = document.getElementById('consistencyProgressFill');
+  const pct = document.getElementById('consistencyProgressPct');
+  const sub = document.getElementById('consistencyProgressSub');
+  const summary = document.getElementById('consistencySummary');
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  progress.classList.add('visible');
+  consistencyAllGaps = [];
+  summary.textContent = '';
+  document.getElementById('consistencyTbody').innerHTML =
+    '<tr><td colspan="5" style="text-align:center;padding:16px;color:#888;">Scanning…</td></tr>';
+
+  try {
+    sub.textContent = 'Fetching section list…';
+    const sections = await zdGetAllSections();
+    let done = 0;
+
+    for (const section of sections) {
+      const pctVal = Math.round((done / sections.length) * 100);
+      fill.style.width = pctVal + '%';
+      pct.textContent = pctVal + '%';
+      sub.textContent = `[${done}/${sections.length}] ${section.name}`;
+
+      try {
+        const all = await zdGetSectionArticles(section.id);
+        const published = all.filter(a => !a.draft);
+        if (published.length < 2) { done++; continue; }
+
+        const overview = consistencyFindOverview(published);
+        if (!overview) { done++; continue; }
+
+        const body = await zdGetArticleBody(overview.id);
+        const linked = consistencyExtractIds(body);
+        const siblings = published.filter(a => String(a.id) !== String(overview.id));
+
+        for (const s of siblings) {
+          if (!linked.has(String(s.id))) {
+            consistencyAllGaps.push({
+              sectionId: section.id,
+              sectionName: section.name,
+              overviewId: overview.id,
+              overviewTitle: overview.title,
+              missingId: s.id,
+              missingTitle: s.title,
+              isBeta: consistencyIsBeta(s.title)
+            });
+          }
+        }
+      } catch (e) { /* skip section */ }
+      done++;
+    }
+
+    fill.style.width = '100%';
+    pct.textContent = '100%';
+    const pub = consistencyAllGaps.filter(g => !g.isBeta).length;
+    const beta = consistencyAllGaps.filter(g => g.isBeta).length;
+    sub.textContent = `Done — ${consistencyAllGaps.length} gaps found (${pub} published, ${beta} beta/WIP)`;
+    renderConsistencyResults();
+
+  } catch (e) {
+    sub.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan for Missing References';
+  }
+}
+
+function renderConsistencyResults() {
+  const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));
+  const visible = consistencyAllGaps.filter(g => !dismissed.has(g.overviewId + '_' + g.missingId));
+  const pub = visible.filter(g => !g.isBeta).length;
+  const beta = visible.filter(g => g.isBeta).length;
+  document.getElementById('consistencySummary').textContent =
+    `${visible.length} gap${visible.length !== 1 ? 's' : ''} — ${pub} in published articles, ${beta} in beta/WIP`;
+
+  const tbody = document.getElementById('consistencyTbody');
+  if (visible.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  visible.forEach(gap => {
+    const key = gap.overviewId + '_' + gap.missingId;
+    const gapJson = JSON.stringify(gap).replace(/"/g, '&quot;');
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #f0f0f5';
+    if (gap.isBeta) tr.style.opacity = '0.65';
+    tr.innerHTML = `
+      <td style="padding:9px 12px;font-size:12px;color:#666;vertical-align:top;">${gap.sectionName}</td>
+      <td style="padding:9px 12px;vertical-align:top;"><a href="https://support.appsflyer.com/hc/en-us/articles/${gap.overviewId}" target="_blank" style="color:#0071e3;font-size:12px;">${gap.overviewTitle}</a></td>
+      <td style="padding:9px 12px;vertical-align:top;"><a href="https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}" target="_blank" style="color:#0071e3;font-size:12px;">${gap.missingTitle}</a></td>
+      <td style="padding:9px 12px;vertical-align:top;">${gap.isBeta
+        ? '<span style="font-size:11px;background:#fff3cd;color:#7a5c00;padding:2px 8px;border-radius:999px;">Beta/WIP</span>'
+        : '<span style="font-size:11px;background:#d1f5e0;color:#1a7a3c;padding:2px 8px;border-radius:999px;">Published</span>'}</td>
+      <td style="padding:9px 12px;vertical-align:top;white-space:nowrap;">
+        <button class="btn btn-sm btn-light" onclick="consistencyDismiss('${key}',this)">✓ Reviewed</button>
+        <button class="btn btn-sm" style="background:#f0703a;color:#fff;margin-left:4px;" onclick='createAsanaTask(${gapJson})'>📋 Asana</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function consistencyDismiss(key, btn) {
+  const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));
+  dismissed.add(key);
+  localStorage.setItem('consistency_dismissed', JSON.stringify([...dismissed]));
+  btn.closest('tr').style.transition = 'opacity 0.3s';
+  btn.closest('tr').style.opacity = '0';
+  setTimeout(() => { btn.closest('tr').remove(); }, 300);
+}
+
+function resetConsistencyDismissed() {
+  localStorage.removeItem('consistency_dismissed');
+  if (consistencyAllGaps.length > 0) renderConsistencyResults();
+}
+
+async function createAsanaTask(gap) {
+  const token = document.getElementById('asanaToken').value.trim();
+  const projectId = document.getElementById('asanaProject').value.trim();
+  const title = `KB: Add reference to "${gap.missingTitle}" in "${gap.overviewTitle}"`;
+  const notes = `Missing reference detected by KB Auditor.\n\nSection: ${gap.sectionName}\nOverview: https://support.appsflyer.com/hc/en-us/articles/${gap.overviewId}\nMissing: https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}\n\nAction: Add a link/mention to "${gap.missingTitle}" in the overview article.`;
+
+  if (!token) {
+    navigator.clipboard.writeText(title + '\n\n' + notes).then(() => {
+      alert('No Asana token set — task text copied to clipboard!');
+    });
+    return;
+  }
+
+  try {
+    const payload = { data: { name: title, notes } };
+    if (projectId) payload.data.projects = [projectId];
+    const res = await fetch('https://app.asana.com/api/1.0/tasks', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.data?.gid) {
+      alert('✅ Asana task created! GID: ' + data.data.gid);
+    } else {
+      throw new Error(JSON.stringify(data.errors || data));
+    }
+  } catch (e) {
+    alert('Asana error: ' + e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 
 // Expose loadFixedItems / saveFixedItems for team sync (if not already defined above)
 function loadFixedItems() {

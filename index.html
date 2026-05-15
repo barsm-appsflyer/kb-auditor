@@ -454,23 +454,14 @@
 <div class="mode-panel" id="panel-consistency">
   <div class="panel-body">
     <div class="scan-intro">
-      <h2>Missing Reference Checker</h2>
-      <p>Scans every section for a guide/overview article, then checks which sibling articles are <strong>not linked</strong> from it. Finds content that users may never discover — like a new "Spoofing" article missing from the Fraud overview.</p>
-      <p style="margin-top:8px;font-size:12px;color:#999;">Uses the public Zendesk API — no auth needed. Scans all sections with 2+ articles.</p>
-    </div>
-
-    <div style="max-width:640px;background:#fff;border:1.5px solid #e0e0e5;border-radius:10px;padding:16px 18px;margin-bottom:20px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:12px;">📋 Asana Integration <span style="font-weight:400;color:#999;">(optional)</span></div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-        <input id="asanaToken" type="password" placeholder="Asana Personal Access Token" class="search-input" style="flex:1;min-width:200px;">
-        <input id="asanaProject" type="text" placeholder="Project GID (optional)" class="search-input" style="width:200px;">
-      </div>
-      <div style="font-size:11px;color:#999;">If token set → creates Asana task directly. Otherwise → copies task text to clipboard.</div>
+      <h2>Consistency — Missing References</h2>
+      <p>Each section in the Help Center should have one overview or guide article that links to everything else in that section. This scan checks: does every published, public article in a section appear in the section's overview? If not, that article is a gap — it exists, but users who land on the overview will never know it's there.</p>
+      <p style="margin-top:8px;font-size:12px;color:#999;">Only scans published articles visible to all users. Skips WIP, Beta, and draft content. Mark gaps as <strong>Reviewed</strong> to hide them — they won't reappear on the next scan.</p>
     </div>
 
     <div class="scan-controls">
       <button id="consistencyBtn" class="btn btn-primary" onclick="runConsistencyScan()">🔍 Scan for Missing References</button>
-      <button class="btn btn-ghost btn-sm" onclick="resetConsistencyDismissed()" title="Clear all reviewed items">Reset reviewed</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetConsistencyDismissed()" title="Show all gaps including reviewed ones" id="consistencyResetBtn" style="display:none;">↩ Show reviewed (<span id="consistencyDismissedCount">0</span>)</button>
     </div>
 
     <div class="progress-card" id="consistencyProgress">
@@ -488,15 +479,14 @@
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
           <tr style="background:#f5f5f7;border-bottom:1.5px solid #e0e0e5;">
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:22%;">Article</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:44%;">Issue</th>
             <th style="padding:10px 12px;text-align:left;font-weight:600;width:18%;">Section</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:24%;">Overview Article</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:27%;">Missing Article</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:10%;">Status</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:600;width:21%;">Actions</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:600;width:16%;">Action</th>
           </tr>
         </thead>
         <tbody id="consistencyTbody">
-          <tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">Run a scan to find missing references</td></tr>
+          <tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">Run a scan to find missing references</td></tr>
         </tbody>
       </table>
     </div>
@@ -2806,7 +2796,8 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
 // ═══════════════════════════════════════════════════════════════════
 
 const CONSISTENCY_OVERVIEW_KEYWORDS = ['guide', 'overview', 'introduction', 'getting started', 'about ', 'onboarding'];
-const CONSISTENCY_BETA_PATTERNS = [/^\[wip\]/i, /^\[beta\]/i, /^\[closed beta\]/i, /^wip[\s\-]/i];
+// Skip anything that isn't fully published and public
+const CONSISTENCY_SKIP_PATTERNS = [/^\[wip\]/i, /^\[beta\]/i, /^\[closed beta\]/i, /^wip[\s\-]/i, /^\[draft\]/i, /^\[internal\]/i];
 let consistencyAllGaps = [];
 
 async function zdFetch(url) {
@@ -2857,8 +2848,12 @@ function consistencyExtractIds(body) {
   return new Set([...body.matchAll(/\/articles\/(\d+)/g)].map(m => String(m[1])));
 }
 
-function consistencyIsBeta(title) {
-  return CONSISTENCY_BETA_PATTERNS.some(p => p.test(title));
+function consistencyIsSkippable(article) {
+  // Skip: draft, not public (has user_segment_id = restricted), or WIP/Beta title
+  if (article.draft) return true;
+  if (article.user_segment_id !== null && article.user_segment_id !== undefined) return true;
+  if (CONSISTENCY_SKIP_PATTERNS.some(p => p.test(article.title))) return true;
+  return false;
 }
 
 async function runConsistencyScan() {
@@ -2890,15 +2885,16 @@ async function runConsistencyScan() {
 
       try {
         const all = await zdGetSectionArticles(section.id);
-        const published = all.filter(a => !a.draft);
-        if (published.length < 2) { done++; continue; }
+        // Only published, public articles (no draft, no segment restriction, no WIP/Beta titles)
+        const eligible = all.filter(a => !consistencyIsSkippable(a));
+        if (eligible.length < 2) { done++; continue; }
 
-        const overview = consistencyFindOverview(published);
+        const overview = consistencyFindOverview(eligible);
         if (!overview) { done++; continue; }
 
         const body = await zdGetArticleBody(overview.id);
         const linked = consistencyExtractIds(body);
-        const siblings = published.filter(a => String(a.id) !== String(overview.id));
+        const siblings = eligible.filter(a => String(a.id) !== String(overview.id));
 
         for (const s of siblings) {
           if (!linked.has(String(s.id))) {
@@ -2908,8 +2904,7 @@ async function runConsistencyScan() {
               overviewId: overview.id,
               overviewTitle: overview.title,
               missingId: s.id,
-              missingTitle: s.title,
-              isBeta: consistencyIsBeta(s.title)
+              missingTitle: s.title
             });
           }
         }
@@ -2919,9 +2914,7 @@ async function runConsistencyScan() {
 
     fill.style.width = '100%';
     pct.textContent = '100%';
-    const pub = consistencyAllGaps.filter(g => !g.isBeta).length;
-    const beta = consistencyAllGaps.filter(g => g.isBeta).length;
-    sub.textContent = `Done — ${consistencyAllGaps.length} gaps found (${pub} published, ${beta} beta/WIP)`;
+    sub.textContent = `Done — ${consistencyAllGaps.length} gap${consistencyAllGaps.length !== 1 ? 's' : ''} found in published public articles`;
     renderConsistencyResults();
 
   } catch (e) {
@@ -2935,33 +2928,43 @@ async function runConsistencyScan() {
 function renderConsistencyResults() {
   const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));
   const visible = consistencyAllGaps.filter(g => !dismissed.has(g.overviewId + '_' + g.missingId));
-  const pub = visible.filter(g => !g.isBeta).length;
-  const beta = visible.filter(g => g.isBeta).length;
+  const reviewedCount = dismissed.size;
+
   document.getElementById('consistencySummary').textContent =
-    `${visible.length} gap${visible.length !== 1 ? 's' : ''} — ${pub} in published articles, ${beta} in beta/WIP`;
+    `${visible.length} gap${visible.length !== 1 ? 's' : ''} need attention` +
+    (reviewedCount > 0 ? ` · ${reviewedCount} already reviewed` : '');
+
+  // Show/hide reset button
+  const resetBtn = document.getElementById('consistencyResetBtn');
+  if (reviewedCount > 0) {
+    resetBtn.style.display = '';
+    document.getElementById('consistencyDismissedCount').textContent = reviewedCount;
+  } else {
+    resetBtn.style.display = 'none';
+  }
 
   const tbody = document.getElementById('consistencyTbody');
   if (visible.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
     return;
   }
   tbody.innerHTML = '';
   visible.forEach(gap => {
     const key = gap.overviewId + '_' + gap.missingId;
-    const gapJson = JSON.stringify(gap).replace(/"/g, '&quot;');
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid #f0f0f5';
-    if (gap.isBeta) tr.style.opacity = '0.65';
     tr.innerHTML = `
-      <td style="padding:9px 12px;font-size:12px;color:#666;vertical-align:top;">${gap.sectionName}</td>
-      <td style="padding:9px 12px;vertical-align:top;"><a href="https://support.appsflyer.com/hc/en-us/articles/${gap.overviewId}" target="_blank" style="color:#0071e3;font-size:12px;">${gap.overviewTitle}</a></td>
-      <td style="padding:9px 12px;vertical-align:top;"><a href="https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}" target="_blank" style="color:#0071e3;font-size:12px;">${gap.missingTitle}</a></td>
-      <td style="padding:9px 12px;vertical-align:top;">${gap.isBeta
-        ? '<span style="font-size:11px;background:#fff3cd;color:#7a5c00;padding:2px 8px;border-radius:999px;">Beta/WIP</span>'
-        : '<span style="font-size:11px;background:#d1f5e0;color:#1a7a3c;padding:2px 8px;border-radius:999px;">Published</span>'}</td>
+      <td style="padding:9px 12px;vertical-align:top;">
+        <a href="https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}" target="_blank" style="color:#0071e3;font-size:13px;font-weight:500;">${gap.missingTitle}</a>
+      </td>
+      <td style="padding:9px 12px;vertical-align:top;font-size:13px;color:#444;line-height:1.5;">
+        This article exists in the <strong>${gap.sectionName}</strong> section but is not linked from the section overview
+        <a href="https://support.appsflyer.com/hc/en-us/articles/${gap.overviewId}" target="_blank" style="color:#0071e3;">"${gap.overviewTitle}"</a>.
+        Users who land on the overview will not know this article exists.
+      </td>
+      <td style="padding:9px 12px;vertical-align:top;font-size:12px;color:#888;">${gap.sectionName}</td>
       <td style="padding:9px 12px;vertical-align:top;white-space:nowrap;">
         <button class="btn btn-sm btn-light" onclick="consistencyDismiss('${key}',this)">✓ Reviewed</button>
-        <button class="btn btn-sm" style="background:#f0703a;color:#fff;margin-left:4px;" onclick='createAsanaTask(${gapJson})'>📋 Asana</button>
       </td>`;
     tbody.appendChild(tr);
   });
@@ -2971,46 +2974,29 @@ function consistencyDismiss(key, btn) {
   const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));
   dismissed.add(key);
   localStorage.setItem('consistency_dismissed', JSON.stringify([...dismissed]));
-  btn.closest('tr').style.transition = 'opacity 0.3s';
-  btn.closest('tr').style.opacity = '0';
-  setTimeout(() => { btn.closest('tr').remove(); }, 300);
+  const tr = btn.closest('tr');
+  tr.style.transition = 'opacity 0.3s';
+  tr.style.opacity = '0';
+  setTimeout(() => {
+    tr.remove();
+    // Update summary counts without full re-render
+    const remaining = document.querySelectorAll('#consistencyTbody tr').length;
+    const reviewedCount = dismissed.size;
+    document.getElementById('consistencySummary').textContent =
+      `${remaining} gap${remaining !== 1 ? 's' : ''} need attention · ${reviewedCount} already reviewed`;
+    document.getElementById('consistencyResetBtn').style.display = '';
+    document.getElementById('consistencyDismissedCount').textContent = reviewedCount;
+    if (remaining === 0) {
+      document.getElementById('consistencyTbody').innerHTML =
+        '<tr><td colspan="4" style="text-align:center;padding:24px;color:#888;">All gaps reviewed ✓</td></tr>';
+    }
+  }, 300);
 }
 
 function resetConsistencyDismissed() {
   localStorage.removeItem('consistency_dismissed');
+  document.getElementById('consistencyResetBtn').style.display = 'none';
   if (consistencyAllGaps.length > 0) renderConsistencyResults();
-}
-
-async function createAsanaTask(gap) {
-  const token = document.getElementById('asanaToken').value.trim();
-  const projectId = document.getElementById('asanaProject').value.trim();
-  const title = `KB: Add reference to "${gap.missingTitle}" in "${gap.overviewTitle}"`;
-  const notes = `Missing reference detected by KB Auditor.\n\nSection: ${gap.sectionName}\nOverview: https://support.appsflyer.com/hc/en-us/articles/${gap.overviewId}\nMissing: https://support.appsflyer.com/hc/en-us/articles/${gap.missingId}\n\nAction: Add a link/mention to "${gap.missingTitle}" in the overview article.`;
-
-  if (!token) {
-    navigator.clipboard.writeText(title + '\n\n' + notes).then(() => {
-      alert('No Asana token set — task text copied to clipboard!');
-    });
-    return;
-  }
-
-  try {
-    const payload = { data: { name: title, notes } };
-    if (projectId) payload.data.projects = [projectId];
-    const res = await fetch('https://app.asana.com/api/1.0/tasks', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (data.data?.gid) {
-      alert('✅ Asana task created! GID: ' + data.data.gid);
-    } else {
-      throw new Error(JSON.stringify(data.errors || data));
-    }
-  } catch (e) {
-    alert('Asana error: ' + e.message);
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -18,10 +18,12 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-    const DISMISSED_DOC = db.collection('consistency').doc('dismissed');
+    const DISMISSED_DOC  = db.collection('consistency').doc('dismissed');
+    const SCAN_CACHE_DOC = db.collection('consistency').doc('scanCache');
 
-    // In-memory cache — kept in sync by real-time listener
+    // In-memory cache — kept in sync by real-time listeners
     window._dismissedSet = new Set();
+    window._scanCache    = null;
 
     // Real-time listener: re-render whenever another user clicks Reviewed
     DISMISSED_DOC.onSnapshot(snap => {
@@ -29,6 +31,17 @@
       window._dismissedSet = new Set(data.keys || []);
       if (typeof consistencyAllGaps !== 'undefined' && consistencyAllGaps.length > 0) {
         renderConsistencyResults();
+      }
+    });
+
+    // Real-time listener: update load-cache button when a new scan is saved
+    SCAN_CACHE_DOC.onSnapshot(snap => {
+      if (snap && snap.exists) {
+        window._scanCache = snap.data();
+        const btn   = document.getElementById('consistencyLoadCacheBtn');
+        const label = document.getElementById('consistencyCacheDateLabel');
+        if (btn)   btn.style.display = 'inline-block';
+        if (label) label.textContent = window._scanCache.date;
       }
     });
 
@@ -3073,9 +3086,14 @@ function resetConsistencyDismissed() {
 function saveCachedConsistency() {
   const cache = { date: new Date().toLocaleString(), gaps: consistencyAllGaps };
   localStorage.setItem('consistencyScanCache', JSON.stringify(cache));
+  // Also save to Firebase so any browser can load it
+  SCAN_CACHE_DOC.set(cache).catch(console.error);
 }
 
 function initConsistencyCacheBtn() {
+  // Firebase listener handles this automatically via onSnapshot
+  // Fall back to localStorage if Firebase hasn't loaded yet
+  if (window._scanCache) return; // already handled by listener
   const raw = localStorage.getItem('consistencyScanCache');
   if (!raw) return;
   try {
@@ -3088,10 +3106,13 @@ function initConsistencyCacheBtn() {
 }
 
 function loadCachedConsistency() {
-  const raw = localStorage.getItem('consistencyScanCache');
-  if (!raw) { alert('No cached consistency scan found.'); return; }
+  // Prefer Firebase cache, fall back to localStorage
+  const cache = window._scanCache || (() => {
+    try { return JSON.parse(localStorage.getItem('consistencyScanCache')); } catch(e) { return null; }
+  })();
+  if (!cache) { alert('No cached consistency scan found.'); return; }
   try {
-    const { date, gaps } = JSON.parse(raw);
+    const { date, gaps } = cache;
     consistencyAllGaps = gaps;
     document.getElementById('consistencyProgress').classList.add('visible');
     document.getElementById('consistencyProgressPct').textContent = '100%';

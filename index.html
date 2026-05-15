@@ -18,14 +18,28 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+
+    // ── Consistency tab docs ──────────────────────────────────────────────────
     const DISMISSED_DOC  = db.collection('consistency').doc('dismissed');
     const SCAN_CACHE_DOC = db.collection('consistency').doc('scanCache');
 
-    // In-memory cache — kept in sync by real-time listeners
-    window._dismissedSet = new Set();
-    window._scanCache    = null;
+    // ── Shared across all tabs ────────────────────────────────────────────────
+    const FIXED_DOC       = db.collection('shared').doc('fixed');       // ✓ Fixed marks
+    const OWNERS_DOC      = db.collection('shared').doc('owners');      // Owner overrides
+    const DICT_DOC        = db.collection('shared').doc('dictionary');  // Custom word list
+    const SPELL_CACHE_DOC = db.collection('spellcheck').doc('cache');   // Spell scan cache
+    const LINK_CACHE_DOC  = db.collection('linkchecker').doc('cache');  // Link scan cache
 
-    // Real-time listener: re-render whenever another user clicks Reviewed
+    // In-memory state — kept in sync by real-time listeners
+    window._dismissedSet   = new Set();
+    window._scanCache      = null;
+    window._fixedSet       = new Set();
+    window._ownerOverrides = {};   // { articleUrl: ownerName }
+    window._customWords    = [];   // shared dictionary words
+    window._spellCache     = null;
+    window._linkCache      = null;
+
+    // ── Consistency: Reviewed dismissals ──────────────────────────────────────
     DISMISSED_DOC.onSnapshot(snap => {
       const data = (snap && snap.exists) ? snap.data() : {};
       window._dismissedSet = new Set(data.keys || []);
@@ -34,7 +48,7 @@
       }
     });
 
-    // Real-time listener: update load-cache button when a new scan is saved
+    // ── Consistency: scan cache ───────────────────────────────────────────────
     SCAN_CACHE_DOC.onSnapshot(snap => {
       if (snap && snap.exists) {
         window._scanCache = snap.data();
@@ -45,6 +59,110 @@
       }
     });
 
+    // ── Shared Fixed items (spell + link checker) ─────────────────────────────
+    FIXED_DOC.onSnapshot(snap => {
+      const data = (snap && snap.exists) ? snap.data() : {};
+      window._fixedSet = new Set(data.keys || []);
+      if (typeof FIXED_ITEMS !== 'undefined') FIXED_ITEMS = window._fixedSet;
+      // Auto-hide rows that were just marked fixed by another user
+      document.querySelectorAll('#resultsBody tr, #spellBody tr').forEach(row => {
+        const btn = row.querySelector('.btn-fixed');
+        if (!btn) return;
+        const key = btn.getAttribute('onclick')?.match(/markFixed\('([^']+)'/)?.[1];
+        if (key && window._fixedSet.has(key)) {
+          row.style.transition = 'opacity 0.3s';
+          row.style.opacity = '0';
+          setTimeout(() => row.remove(), 300);
+        }
+      });
+    });
+
+    // ── Owner overrides (user-reassigned owners, shared across all tabs) ──────
+    OWNERS_DOC.onSnapshot(snap => {
+      const data = (snap && snap.exists) ? snap.data() : {};
+      window._ownerOverrides = data.overrides || {};
+      // Re-render owner badges if any tab is currently showing results
+      document.querySelectorAll('[data-article-url]').forEach(badge => {
+        const url = badge.dataset.articleUrl;
+        if (url && window._ownerOverrides[url]) {
+          const o = window._ownerOverrides[url];
+          badge.className = `owner-badge ${o === 'Dori' ? 'owner-dori' : o === 'Ilana' ? 'owner-ilana' : o === 'Elliot' ? 'owner-elliot' : 'owner-unknown'}`;
+          badge.textContent = (o || '—') + ' ▾';
+        }
+      });
+    });
+
+    function fbSaveOwnerOverride(articleUrl, ownerName) {
+      window._ownerOverrides[articleUrl] = ownerName;
+      OWNERS_DOC.set({ overrides: window._ownerOverrides }, { merge: false }).catch(console.error);
+    }
+
+    // ── Shared dictionary ─────────────────────────────────────────────────────
+    DICT_DOC.onSnapshot(snap => {
+      const data = (snap && snap.exists) ? snap.data() : {};
+      window._customWords = data.words || [];
+      // Rebuild ignore set and re-filter any open spell results
+      if (typeof buildIgnoreSet === 'function') {
+        if (typeof IGNORED_WORDS !== 'undefined') IGNORED_WORDS = buildIgnoreSet();
+        if (typeof renderDictPanel === 'function') renderDictPanel();
+        if (typeof spellResults !== 'undefined' && spellResults.length > 0) refreshSpellResults();
+      }
+    });
+
+    function fbSaveDictionary(words) {
+      window._customWords = words;
+      DICT_DOC.set({ words }).catch(console.error);
+      try { localStorage.setItem('kbDictCustom', JSON.stringify(words)); } catch(e) {}
+    }
+
+    // One-time migration: if Firebase dict is empty, pull from GAS and populate
+    DICT_DOC.get().then(snap => {
+      if (!snap.exists || !(snap.data().words || []).length) {
+        const gasUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec?action=getDictionary";
+        fetch(gasUrl).then(r => r.json()).then(serverWords => {
+          if (!serverWords || !serverWords.length) return;
+          // Also merge any localStorage words
+          let local = [];
+          try { local = JSON.parse(localStorage.getItem('kbDictCustom') || '[]'); } catch(e) {}
+          const merged = Array.from(new Set(local.concat(serverWords)));
+          fbSaveDictionary(merged);
+          console.log('Migrated ' + merged.length + ' word(s) from GAS → Firebase');
+        }).catch(() => {
+          // GAS unreachable — just migrate localStorage words if any
+          let local = [];
+          try { local = JSON.parse(localStorage.getItem('kbDictCustom') || '[]'); } catch(e) {}
+          if (local.length) fbSaveDictionary(local);
+        });
+      }
+    }).catch(console.error);
+
+    // ── Spell check cache ─────────────────────────────────────────────────────
+    SPELL_CACHE_DOC.onSnapshot(snap => {
+      if (snap && snap.exists) {
+        window._spellCache = snap.data();
+        const btn   = document.getElementById('loadCacheBtn');
+        const label = document.getElementById('cacheDateLabel');
+        if (btn)   btn.style.display = 'inline-block';
+        if (label && window._spellCache.ts) {
+          label.textContent = new Date(window._spellCache.ts).toLocaleDateString();
+        }
+      }
+    });
+
+    // ── Link checker cache ────────────────────────────────────────────────────
+    LINK_CACHE_DOC.onSnapshot(snap => {
+      if (snap && snap.exists) {
+        window._linkCache = snap.data();
+        const btn   = document.getElementById('loadLinkCacheBtn');
+        const label = document.getElementById('linkCacheDateLabel');
+        if (btn)   btn.style.display = 'inline-block';
+        if (label && window._linkCache.ts) {
+          label.textContent = new Date(window._linkCache.ts).toLocaleDateString();
+        }
+      }
+    });
+
+    // ── Helper functions ──────────────────────────────────────────────────────
     function fbSaveDismissed(set) {
       window._dismissedSet = set;
       DISMISSED_DOC.set({ keys: [...set] }).catch(console.error);
@@ -52,6 +170,24 @@
     function fbResetDismissed() {
       window._dismissedSet = new Set();
       DISMISSED_DOC.set({ keys: [] }).catch(console.error);
+    }
+    function fbSaveFixed(set) {
+      window._fixedSet = set;
+      FIXED_DOC.set({ keys: [...set] }).catch(console.error);
+    }
+    function fbSaveSpellCache(cache) {
+      window._spellCache = cache;
+      SPELL_CACHE_DOC.set(cache).catch(e => {
+        console.warn('Spell cache too large for Firestore, falling back to localStorage', e);
+        try { localStorage.setItem('kbSpellCache', JSON.stringify(cache)); } catch(_) {}
+      });
+    }
+    function fbSaveLinkCache(cache) {
+      window._linkCache = cache;
+      LINK_CACHE_DOC.set(cache).catch(e => {
+        console.warn('Link cache too large for Firestore, falling back to localStorage', e);
+        try { localStorage.setItem('kbLinkCache', JSON.stringify(cache)); } catch(_) {}
+      });
     }
   </script>
   <style>
@@ -1091,6 +1227,10 @@ function cleanArticleBody(html) {
 //  Based on product responsibility list + Asana task history
 // ═══════════════════════════════════════════════════════════════════════════
 function getArticleOwner(title, url) {
+  // Check Firebase overrides first (user-assigned, shared across all users)
+  if (url && window._ownerOverrides && window._ownerOverrides[url]) {
+    return window._ownerOverrides[url];
+  }
   const t = (title || "").toLowerCase();
   const u = (url  || "").toLowerCase();
   const has = (...kw) => kw.some(k => t.includes(k) || u.includes(k));
@@ -1228,11 +1368,11 @@ function ownerClass(o) {
   return o === "Ilana" ? "owner-ilana" : o === "Dori" ? "owner-dori" : o === "Elliot" ? "owner-elliot" : "owner-unknown";
 }
 
-function ownerBadgeHtml(owner) {
-  return `<span class="owner-badge ${ownerClass(owner)}" style="cursor:pointer;" title="Click to change owner" onclick="toggleOwnerPicker(this,'${escHtml(owner)}')">${escHtml(owner)} ▾</span>`;
+function ownerBadgeHtml(owner, articleUrl) {
+  return `<span class="owner-badge ${ownerClass(owner)}" data-article-url="${escHtml(articleUrl||'')}" style="cursor:pointer;" title="Click to change owner" onclick="toggleOwnerPicker(this,'${escHtml(owner)}','${escHtml(articleUrl||'')}')">${escHtml(owner)} ▾</span>`;
 }
 
-function toggleOwnerPicker(badge, currentOwner) {
+function toggleOwnerPicker(badge, currentOwner, articleUrl) {
   // Close any open picker
   document.querySelectorAll(".owner-picker").forEach(p => p.remove());
 
@@ -1251,10 +1391,11 @@ function toggleOwnerPicker(badge, currentOwner) {
       badge.className = `owner-badge ${ownerClass(o)}`;
       badge.style.cursor = "pointer";
       badge.title = "Click to change owner";
-      badge.textContent = "";
-      badge.onclick = () => toggleOwnerPicker(badge, o);
       badge.textContent = (o || "—") + " ▾";
+      badge.onclick = () => toggleOwnerPicker(badge, o, articleUrl);
       picker.remove();
+      // Save to Firebase so all users see the change
+      if (articleUrl) fbSaveOwnerOverride(articleUrl, o);
       // Re-apply current filter so the row shows/hides correctly
       const activeBtn = document.querySelector(".owner-filter-btn.active");
       if (activeBtn) filterByOwner(activeBtn.dataset.owner);
@@ -1276,12 +1417,14 @@ function toggleOwnerPicker(badge, currentOwner) {
 const FIXED_STORAGE_KEY = "kbFixedItems";
 
 function loadFixedItems() {
+  // Prefer Firebase in-memory set (synced via onSnapshot); fall back to localStorage
+  if (window._fixedSet && window._fixedSet.size > 0) return new Set(window._fixedSet);
   try { return new Set(JSON.parse(localStorage.getItem(FIXED_STORAGE_KEY) || "[]")); }
   catch(e) { return new Set(); }
 }
 function saveFixedItems(set) {
-  try { localStorage.setItem(FIXED_STORAGE_KEY, JSON.stringify([...set])); }
-  catch(e) {}
+  fbSaveFixed(set); // sync to Firebase (shared across all users)
+  try { localStorage.setItem(FIXED_STORAGE_KEY, JSON.stringify([...set])); } catch(e) {} // local backup
 }
 let FIXED_ITEMS = loadFixedItems();
 
@@ -1336,7 +1479,7 @@ function appendSpellRow(m) {
     <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
     <td class="context-cell">${contextHtml}</td>
     <td title="${escHtml(m.aiReason||'')}" style="cursor:${m.aiReason?'help':'default'}">${verdictHtml}</td>
-    <td>${ownerBadgeHtml(owner)}</td>
+    <td>${ownerBadgeHtml(owner, m.article_url)}</td>
     <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
       ${alreadyIgnored
         ? `<span style="font-size:11px;color:#34c759;">✓ In dictionary</span>`
@@ -1747,42 +1890,23 @@ function exportCSV() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  DICTIONARY  (custom ignore list, persisted in localStorage)
+//  DICTIONARY  (custom ignore list — Firebase-backed, real-time shared)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function loadCustomWords() {
+  // Prefer Firebase in-memory (synced via onSnapshot); fall back to localStorage
+  if (window._customWords && window._customWords.length) return [...window._customWords];
   try { return JSON.parse(localStorage.getItem("kbDictCustom") || "[]"); }
   catch(e) { return []; }
 }
 function saveCustomWords(arr) {
-  // Save locally for instant UI feedback
-  try { localStorage.setItem("kbDictCustom", JSON.stringify(arr)); } catch(e) {}
-  // Sync to shared Drive file via GAS API
-  const apiUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec";
-  fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({ words: arr })
-  }).catch(function(err) { console.warn("Dict sync failed:", err); });
+  fbSaveDictionary(arr); // saves to Firebase → real-time sync for everyone
 }
 
-// Pull the shared dictionary from Drive on startup and merge with local words
+// No longer needed — Firebase onSnapshot handles live sync
 function syncSharedDictionary() {
-  const apiUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec?action=getDictionary";
-  fetch(apiUrl)
-    .then(function(r) { return r.json(); })
-    .then(function(serverWords) {
-      if (!serverWords || !serverWords.length) return;
-      const local  = loadCustomWords();
-      const merged = Array.from(new Set(local.concat(serverWords)));
-      if (merged.length === local.length) return; // nothing new
-      try { localStorage.setItem("kbDictCustom", JSON.stringify(merged)); } catch(e) {}
-      buildIgnoreSet();
-      renderDictPanel();
-      if (spellResults && spellResults.length) refreshSpellResults();
-      console.log("Synced " + (merged.length - local.length) + " new word(s) from shared dictionary.");
-    })
-    .catch(function(err) { console.warn("Dict fetch failed:", err); });
+  // Migration already runs once at page load (in Firebase init block)
+  // Nothing to do here — Firebase onSnapshot keeps dictionary up to date
 }
 
 function addDictWord() {
@@ -1851,36 +1975,38 @@ function renderDictPanel() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SCAN CACHE  (save/load results from localStorage)
+//  SCAN CACHE  (Firebase-backed, shared across all users)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function saveScanCache(results, checkedCount) {
-  try {
-    const cache = { ts: Date.now(), checked: checkedCount, results };
-    localStorage.setItem("kbSpellCache", JSON.stringify(cache));
-    updateCacheButton();
-  } catch(e) {}
+  const cache = { ts: Date.now(), checked: checkedCount, results };
+  fbSaveSpellCache(cache); // saves to Firebase + localStorage fallback
+  updateCacheButton();
 }
 
 function updateCacheButton() {
-  try {
-    const raw = localStorage.getItem("kbSpellCache");
-    const btn = document.getElementById("loadCacheBtn");
-    const label = document.getElementById("cacheDateLabel");
-    if (!raw || !btn) return;
-    const cache = JSON.parse(raw);
-    const d = new Date(cache.ts);
-    label.textContent = d.toLocaleDateString(undefined, {month:"short", day:"numeric"}) +
-                        " " + d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
-    btn.style.display = "inline-block";
-  } catch(e) {}
+  // Firebase onSnapshot already handles button visibility; this is a local refresh
+  const btn   = document.getElementById("loadCacheBtn");
+  const label = document.getElementById("cacheDateLabel");
+  if (!btn) return;
+  const cache = window._spellCache || (() => {
+    try { return JSON.parse(localStorage.getItem("kbSpellCache")); } catch(e) { return null; }
+  })();
+  if (!cache) return;
+  const d = new Date(cache.ts);
+  label.textContent = d.toLocaleDateString(undefined, {month:"short", day:"numeric"}) +
+                      " " + d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+  btn.style.display = "inline-block";
 }
 
 function loadCachedScan() {
   try {
-    const raw = localStorage.getItem("kbSpellCache");
-    if (!raw) return;
-    const cache = JSON.parse(raw);
+    // Prefer Firebase in-memory cache (synced in real-time)
+    const cache = window._spellCache || (() => {
+      const raw = localStorage.getItem("kbSpellCache");
+      return raw ? JSON.parse(raw) : null;
+    })();
+    if (!cache) return;
     spellCheckedCount = cache.checked || (cache.results || []).length;
 
     // Auto-apply dictionary — filter out words now in the ignore list
@@ -2626,7 +2752,7 @@ function appendLinkRow(r) {
       <div class="art-title">${escHtml(r.article_title)}</div>
       <div class="art-url"><a href="${escHtml(r.article_url)}" target="_blank">Open ↗</a></div>
     </td>
-    <td>${ownerBadgeHtml(owner)}</td>
+    <td>${ownerBadgeHtml(owner, r.article_url)}</td>
     <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
     <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
     <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>
@@ -2724,19 +2850,21 @@ function setLinkProgress(title, pct, sub, count) {
   document.getElementById("linkProgressCount").textContent = count;
 }
 
-// ── Link result cache ────────────────────────────────────────────────────────
+// ── Link result cache (Firebase-backed) ──────────────────────────────────────
 function saveLinkCache(results, checkedCount) {
-  try {
-    localStorage.setItem("kbLinkCache", JSON.stringify({ ts: Date.now(), checked: checkedCount, results }));
-    updateLinkCacheButton();
-  } catch(e) {}
+  const cache = { ts: Date.now(), checked: checkedCount, results };
+  fbSaveLinkCache(cache); // saves to Firebase + localStorage fallback
+  updateLinkCacheButton();
 }
 
 function loadCachedLinks() {
   try {
-    const raw = localStorage.getItem("kbLinkCache");
-    if (!raw) return;
-    const cache = JSON.parse(raw);
+    // Prefer Firebase in-memory cache (synced in real-time)
+    const cache = window._linkCache || (() => {
+      const raw = localStorage.getItem("kbLinkCache");
+      return raw ? JSON.parse(raw) : null;
+    })();
+    if (!cache) return;
     linkResults      = cache.results || [];
     linkCheckedCount = cache.checked || linkResults.length;
     unverifShown = true;
@@ -2763,10 +2891,12 @@ function loadCachedLinks() {
 
 function updateLinkCacheButton() {
   try {
-    const raw = localStorage.getItem("kbLinkCache");
-    if (!raw) return;
-    const { ts } = JSON.parse(raw);
-    document.getElementById("linkCacheDateLabel").textContent = new Date(ts).toLocaleDateString();
+    const cache = window._linkCache || (() => {
+      const raw = localStorage.getItem("kbLinkCache");
+      return raw ? JSON.parse(raw) : null;
+    })();
+    if (!cache) return;
+    document.getElementById("linkCacheDateLabel").textContent = new Date(cache.ts).toLocaleDateString();
     document.getElementById("loadLinkCacheBtn").style.display = "inline-block";
   } catch(e) {}
 }

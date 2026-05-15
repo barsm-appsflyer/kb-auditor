@@ -750,6 +750,8 @@ function setMode(mode, tab) {
       const actionable = linkResults.filter(r => r.status !== "ok" && r.status !== "unverifiable").length;
       setStatus(`Checking links… ${actionable} actionable issue${actionable !== 1 ? "s" : ""} so far.`);
     }
+  } else if (mode === "consistency" && consistencyAllGaps.length > 0) {
+    renderConsistencyResults();
   } else {
     resetResults();
     setStatus("Ready.");

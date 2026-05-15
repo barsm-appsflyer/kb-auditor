@@ -323,8 +323,6 @@
       <button class="btn btn-light btn-sm" id="shareExportBtn" onclick="exportResultsJSON()" style="display:none" title="Export results as a JSON file — use this if you want to import them back later or share with a teammate">⬆ Export JSON</button>
       <button class="btn btn-light btn-sm" id="spellCsvBtn" onclick="exportCSV()" style="display:none" title="Download results as a CSV file you can open in Excel or Google Sheets">⬇ Export CSV</button>
       <label class="btn btn-light btn-sm" style="cursor:pointer" title="Import a JSON file exported via 'Export JSON' — dictionary is applied automatically">⬇ Import JSON<input type="file" accept=".json" onchange="importResultsJSON(event)" style="display:none"/></label>
-      <button class="btn btn-light btn-sm" id="aiReviewBtn" onclick="runAIReview()" style="display:none" title="Send all current results to Claude for AI-powered validation — distinguishes genuine typos from technical terms using KB knowledge">🤖 AI Review</button>
-      <label class="btn btn-light btn-sm" id="importVerdictsBtn" style="display:none;cursor:pointer" title="Import the AI verdicts JSON that Claude responded with — applies verdict badges to all results">⬇ Import Verdicts<input type="file" accept=".json,.txt" onchange="importAIVerdicts(event)" style="display:none"/></label>
       <button class="btn btn-light btn-sm" id="teamLoadBtn" onclick="loadTeamScan()" style="display:none" title="Load the shared team scan from the GitHub repo — everyone sees the same results">🌐 Load Team Results</button>
       <button class="btn btn-light btn-sm" id="teamPublishBtn" onclick="publishTeamResults()" style="display:none" title="Publish current results to GitHub so all teammates see them — requires a GitHub PAT">📤 Publish to Team</button>
       <span id="teamSyncBadge" style="display:none;font-size:11px;padding:3px 8px;background:#f0fff4;color:#16a34a;border-radius:10px;border:1px solid #bbf7d0;"></span>
@@ -531,6 +529,16 @@
 
     <div id="consistencySummary" style="font-size:13px;color:#666;margin-bottom:12px;min-height:20px;"></div>
 
+    <!-- Owner filter bar for Consistency tab -->
+    <div id="consistencyOwnerFilter" style="display:none;margin-bottom:12px;padding:8px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid #e8e8ed;">
+      <span style="font-size:12px;color:#888;font-weight:500;">👤 Owner:</span>
+      <button class="owner-filter-btn con-owner-btn active" data-owner="All"    onclick="filterConsistencyOwner('All',this)">All</button>
+      <button class="owner-filter-btn con-owner-btn of-dori"   data-owner="Dori"   onclick="filterConsistencyOwner('Dori',this)">Dori</button>
+      <button class="owner-filter-btn con-owner-btn of-ilana"  data-owner="Ilana"  onclick="filterConsistencyOwner('Ilana',this)">Ilana</button>
+      <button class="owner-filter-btn con-owner-btn of-elliot" data-owner="Elliot" onclick="filterConsistencyOwner('Elliot',this)">Elliot</button>
+      <button class="owner-filter-btn con-owner-btn" data-owner="—" onclick="filterConsistencyOwner('—',this)">Unassigned</button>
+    </div>
+
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
@@ -596,6 +604,17 @@
 const LANGUAGETOOL_URL = "https://api.languagetool.org/v2/check";
 const LT_DELAY_MS      = 300;   // ms between article requests (rate-limit safe)
 const ZENDESK_ARTICLES = "https://appsflyer.zendesk.com/api/v2/help_center/en-us/articles.json";
+
+// ── Global article filter — applied in ALL tabs ──────────────────────────────
+// Skips: drafts, restricted (internal) articles, non-English, and WIP/Beta titles
+const SKIP_TITLE_PATTERNS = [/^\[wip\]/i, /^\[beta\]/i, /^\[closed beta\]/i, /^wip[\s\-]/i, /^\[draft\]/i, /^\[internal\]/i, /\bwip\b/i];
+function isArticleSkippable(article) {
+  if (article.draft) return true;
+  if (article.user_segment_id !== null && article.user_segment_id !== undefined) return true;
+  if (article.locale && !article.locale.startsWith('en')) return true;
+  if (SKIP_TITLE_PATTERNS.some(p => p.test(article.title || ''))) return true;
+  return false;
+}
 
 // ── Shared team state (GitHub-hosted JSON files in the same repo) ────────────
 // These files live in the repo root. When Bar commits an updated version,
@@ -774,7 +793,6 @@ function setMode(mode, tab) {
       setSpellCsvBtn(hasResults);
       document.getElementById("shareExportBtn").style.display    = hasResults ? "inline-block" : "none";
       document.getElementById("refreshResultsBtn").style.display  = hasResults ? "inline-block" : "none";
-      document.getElementById("aiReviewBtn").style.display        = hasResults ? "inline-block" : "none";
       setStatus(`Scan complete. Checked ${spellCheckedCount} articles, found ${spellResults.length} potential spelling issue${spellResults.length !== 1 ? "s" : ""}.`);
     } else {
       setStatus(`Scanning… ${spellResults.length} issue${spellResults.length !== 1 ? "s" : ""} found so far.`);
@@ -845,6 +863,7 @@ async function runFullScan() {
       if (stopFlag) break;
 
       const article = allArticles[i];
+      if (isArticleSkippable(article)) { checked++; continue; }
       const pct = Math.round((i / total) * 100);
 
       setProgress(
@@ -1173,6 +1192,25 @@ function showOwnerFilterBar() {
   const hash = window.location.hash;
   const m = hash.match(/#owner=(.+)/);
   if (m) filterByOwner(decodeURIComponent(m[1]));
+}
+
+// Consistency-specific owner filter
+function filterConsistencyOwner(owner, btn) {
+  document.querySelectorAll(".con-owner-btn").forEach(b => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  document.querySelectorAll("#consistencyTbody tr[data-owner]").forEach(tr => {
+    if (owner === "All") { tr.style.display = ""; return; }
+    tr.style.display = (tr.dataset.owner === owner) ? "" : "none";
+  });
+}
+
+function showConsistencyOwnerFilter() {
+  const bar = document.getElementById("consistencyOwnerFilter");
+  if (bar) bar.style.display = "flex";
+  // Reset to All
+  document.querySelectorAll(".con-owner-btn").forEach(b => b.classList.remove("active"));
+  const allBtn = document.querySelector(".con-owner-btn[data-owner='All']");
+  if (allBtn) allBtn.classList.add("active");
 }
 
 function resetOwnerFilter() {
@@ -1859,8 +1897,6 @@ function loadCachedScan() {
     setSpellCsvBtn(hasSpell);
     if (hasSpell) document.getElementById("refreshResultsBtn").style.display    = "inline-block";
     if (hasSpell) document.getElementById("shareExportBtn").style.display       = "inline-block";
-    if (hasSpell) document.getElementById("aiReviewBtn").style.display          = "inline-block";
-    if (hasSpell) document.getElementById("importVerdictsBtn").style.display    = "inline-block";
     const d = new Date(cache.ts);
     const dictNote = removed > 0 ? ` (${removed} filtered out by your dictionary)` : "";
     setStatus(`Loaded cached scan from ${d.toLocaleString()} — ${spellCheckedCount} articles, ${spellResults.length} issues${dictNote}.`);
@@ -1911,8 +1947,6 @@ function importResultsJSON(event) {
       setSpellCsvBtn(hasResults);
       if (hasResults) document.getElementById("refreshResultsBtn").style.display    = "inline-block";
       document.getElementById("shareExportBtn").style.display                       = "inline-block";
-      if (hasResults) document.getElementById("aiReviewBtn").style.display          = "inline-block";
-      if (hasResults) document.getElementById("importVerdictsBtn").style.display    = "inline-block";
       document.getElementById("progressCard").classList.remove("visible");
 
       const d = new Date(payload.scannedAt);
@@ -1935,8 +1969,6 @@ function importResultsJSON(event) {
 // Also show share button when scan completes
 function showShareBtn() {
   document.getElementById("shareExportBtn").style.display    = "inline-block";
-  document.getElementById("aiReviewBtn").style.display       = "inline-block";
-  document.getElementById("importVerdictsBtn").style.display = "inline-block";
 }
 
 // ── Import AI Verdicts JSON ───────────────────────────────────────────────────
@@ -2329,7 +2361,7 @@ async function checkLink(url) {
   try {
     const resp = await fetch(url, { method: "HEAD", signal: ctrl1.signal, redirect: "follow" });
     clearTimeout(t1);
-    if (resp.redirected) return { status: "redirect",  code: "3xx" };
+    if (resp.redirected) return { status: "redirect",  code: "3xx", finalUrl: resp.url };
     if (resp.ok)         return { status: "ok",        code: resp.status };
     return                      { status: "broken",    code: resp.status };
   } catch(e1) {
@@ -2399,6 +2431,7 @@ async function runLinkScan() {
     const urlMap = new Map(); // url → [{article_title, article_url, linkText}]
     for (const art of allArticles) {
       if (linkStopFlag) break;
+      if (isArticleSkippable(art)) continue;
       for (const { url, text } of extractLinks(art.body || "", art.html_url || "")) {
         if (!urlMap.has(url)) urlMap.set(url, []);
         urlMap.get(url).push({
@@ -2491,7 +2524,7 @@ function stopLinkScan() {
 // ── Table helpers ────────────────────────────────────────────────────────────
 function setLinkHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Status</th><th>Article</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Action</th>`;
+    `<th>Status</th><th>Article</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Suggested Fix</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display   = "none";
   showOwnerFilterBar();
@@ -2505,6 +2538,21 @@ const LINK_STATUS_LABELS = {
   neterror:     "❌ Network Error",
   timeout:      "⏱️ Timeout"
 };
+
+function suggestedLinkFix(r) {
+  if (r.status === "redirect" && r.finalUrl && r.finalUrl !== r.url) {
+    return `<span style="color:#555;">Replace with:</span><br>
+      <a href="${escHtml(r.finalUrl)}" target="_blank" style="color:#0071e3;word-break:break-all;font-size:11px;">${escHtml(r.finalUrl)}</a>
+      <button onclick="navigator.clipboard.writeText('${escHtml(r.finalUrl)}')" style="margin-left:4px;font-size:10px;padding:1px 5px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;" title="Copy new URL">Copy</button>`;
+  }
+  if (r.status === "broken" || r.status === "neterror") {
+    const isZd = /support\.appsflyer\.com\/hc\/[a-z-]+\/articles\/(\d+)/i.test(r.url);
+    return isZd
+      ? `<span style="color:#c00;">Article removed from KB.</span><br><span style="color:#888;font-size:11px;">Search Zendesk for a replacement.</span>`
+      : `<span style="color:#c00;">Page not found.</span><br><span style="color:#888;font-size:11px;">Remove or find replacement URL.</span>`;
+  }
+  return `<span style="color:#aaa;">—</span>`;
+}
 
 function appendLinkRow(r) {
   // Show filter bar on the very first result so users can filter mid-scan
@@ -2540,6 +2588,7 @@ function appendLinkRow(r) {
     <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
     <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
     <td style="font-size:12px;color:#888;white-space:nowrap;">${r.code || "—"}</td>
+    <td style="font-size:12px;max-width:200px;">${suggestedLinkFix(r)}</td>
     <td style="display:flex;gap:5px;align-items:center;">
       <button class="btn btn-sm btn-fixed" onclick="markFixed('${escHtml(fixKey)}', this.closest('tr'))" title="Mark as fixed — hides this row permanently">✓ Fixed</button>
     </td>`;
@@ -2759,7 +2808,7 @@ async function loadTeamScan() {
     renderSpellSummary(checked, spellResults.length, 0);
     setSpellCsvBtn(spellResults.length > 0);
     const hasResults = spellResults.length > 0;
-    ["shareExportBtn","refreshResultsBtn","aiReviewBtn","importVerdictsBtn","teamPublishBtn"].forEach(id => {
+    ["shareExportBtn","refreshResultsBtn","teamPublishBtn"].forEach(id => {
       const el = document.getElementById(id);
       if (el && hasResults) el.style.display = "inline-block";
     });
@@ -2861,7 +2910,6 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
 
 const CONSISTENCY_OVERVIEW_KEYWORDS = ['guide', 'overview', 'introduction', 'getting started', 'about ', 'onboarding'];
 // Skip anything that isn't fully published and public
-const CONSISTENCY_SKIP_PATTERNS = [/^\[wip\]/i, /^\[beta\]/i, /^\[closed beta\]/i, /^wip[\s\-]/i, /^\[draft\]/i, /^\[internal\]/i];
 let consistencyAllGaps = [];
 
 async function zdFetch(url) {
@@ -2913,11 +2961,7 @@ function consistencyExtractIds(body) {
 }
 
 function consistencyIsSkippable(article) {
-  // Skip: draft, not public (has user_segment_id = restricted), or WIP/Beta title
-  if (article.draft) return true;
-  if (article.user_segment_id !== null && article.user_segment_id !== undefined) return true;
-  if (CONSISTENCY_SKIP_PATTERNS.some(p => p.test(article.title))) return true;
-  return false;
+  return isArticleSkippable(article);
 }
 
 async function runConsistencyScan() {
@@ -3018,7 +3062,7 @@ function renderConsistencyResults() {
   const tbody = document.getElementById('consistencyTbody');
   if (visible.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#888;">No gaps found or all reviewed ✓</td></tr>';
-    showOwnerFilterBar();
+    showConsistencyOwnerFilter();
     return;
   }
   tbody.innerHTML = '';
@@ -3047,7 +3091,7 @@ function renderConsistencyResults() {
       </td>`;
     tbody.appendChild(tr);
   });
-  showOwnerFilterBar();
+  showConsistencyOwnerFilter();
 }
 
 function consistencyDismiss(key, btn) {

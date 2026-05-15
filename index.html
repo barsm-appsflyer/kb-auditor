@@ -2546,15 +2546,57 @@ function suggestedLinkFix(r) {
       <button onclick="navigator.clipboard.writeText('${escHtml(r.finalUrl)}')" style="margin-left:4px;font-size:10px;padding:1px 5px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;" title="Copy new URL">Copy</button>`;
   }
   if (r.status === "broken" || r.status === "neterror") {
-    const isZd = /support\.appsflyer\.com\/hc\/[a-z-]+\/articles\/(\d+)/i.test(r.url);
-    return isZd
-      ? `<span style="color:#c00;">Article removed from KB.</span><br><span style="color:#888;font-size:11px;">Search Zendesk for a replacement.</span>`
-      : `<span style="color:#c00;">Page not found.</span><br><span style="color:#888;font-size:11px;">Remove or find replacement URL.</span>`;
+    const zdMatch = (r.url || '').match(/support\.appsflyer\.com\/hc\/[a-z-]+\/articles\/(\d+)[-_]?(.+)?/i);
+    if (zdMatch) {
+      const cellId = 'fix-' + Math.random().toString(36).slice(2);
+      const keywords = zdMatch[2] ? zdMatch[2].replace(/[-_]/g,' ').trim() : zdMatch[1];
+      return `<span id="${cellId}">
+        <span style="color:#c00;font-size:11px;">Article may have moved.</span><br>
+        <button onclick="findZdReplacement('${escHtml(keywords)}','${cellId}')"
+          style="margin-top:3px;font-size:10px;padding:2px 7px;border:1px solid #0071e3;border-radius:4px;
+                 cursor:pointer;background:#fff;color:#0071e3;">🔍 Find replacement</button>
+      </span>`;
+    }
+    return `<span style="color:#c00;">Page not found.</span><br><span style="color:#888;font-size:11px;">Remove or find replacement URL.</span>`;
   }
   return `<span style="color:#aaa;">—</span>`;
 }
 
+async function findZdReplacement(keywords, cellId) {
+  const cell = document.getElementById(cellId);
+  if (!cell) return;
+  cell.innerHTML = '<span style="color:#888;font-size:11px;">⏳ Searching…</span>';
+  try {
+    const q = encodeURIComponent(keywords.replace(/\d+/g,'').trim().slice(0,80));
+    const res = await fetch(`https://support.appsflyer.com/api/v2/help_center/en-us/articles/search.json?query=${q}&per_page=5`);
+    const data = await res.json();
+    const hits = (data.results || []).filter(a => !a.draft && a.user_segment_id === null).slice(0,3);
+    if (hits.length === 0) {
+      cell.innerHTML = '<span style="color:#aaa;font-size:11px;">No matches found</span>';
+    } else {
+      cell.innerHTML = '<span style="color:#555;font-size:11px;font-weight:600;">Possible replacements:</span><br>' +
+        hits.map(a =>
+          `<a href="${escHtml(a.html_url)}" target="_blank"
+             style="display:block;color:#0071e3;font-size:11px;word-break:break-all;margin-top:2px;">${escHtml(a.title)}</a>`
+        ).join('');
+    }
+  } catch(e) {
+    cell.innerHTML = '<span style="color:#aaa;font-size:11px;">Search failed</span>';
+  }
+}
+
+function isWipTargetUrl(url) {
+  // Zendesk article URL slug: .../articles/12345-Slug-Words
+  const m = (url || '').match(/\/articles\/\d+[-_](.+?)(?:\?|#|$)/i);
+  if (m) return /\bwip\b/i.test(m[1].replace(/-/g, ' '));
+  // Also catch /hc/en-us/articles/12345 where slug IS literally "wip" or path has wip segment
+  return /[/\-_]wip[/\-_$]/i.test(url);
+}
+
 function appendLinkRow(r) {
+  // Skip links whose TARGET URL points to a WIP article
+  if (isWipTargetUrl(r.url)) return;
+
   // Show filter bar on the very first result so users can filter mid-scan
   const filterBar = document.getElementById("filterBar");
   if (!filterBar.innerHTML.trim()) {

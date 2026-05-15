@@ -2992,6 +2992,7 @@ function renderConsistencyResults() {
     tbody.appendChild(tr);
   });
   showOwnerFilterBar();
+}
 
 function consistencyDismiss(key, btn) {
   const dismissed = new Set(JSON.parse(localStorage.getItem('consistency_dismissed') || '[]'));

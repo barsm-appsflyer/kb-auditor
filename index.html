@@ -27,11 +27,15 @@
     const LINK_CACHE_DOC  = db.collection('linkchecker').doc('cache');
 
     // ── In-memory state ───────────────────────────────────────────────────────
-    window._fixedSet       = new Set();
-    window._ownerOverrides = {};
+    try { window._fixedSet = new Set(JSON.parse(localStorage.getItem('kbFixedItems') || '[]')); }
+    catch(e) { window._fixedSet = new Set(); }
     window._customWords    = [];
     window._spellCache     = null;
     window._linkCache      = null;
+
+    // Load owner overrides immediately from localStorage (works even when Firebase is offline)
+    try { window._ownerOverrides = JSON.parse(localStorage.getItem('kbOwnerOverrides') || '{}'); }
+    catch(e) { window._ownerOverrides = {}; }
 
     // ── Fixed items ───────────────────────────────────────────────────────────
     FIXED_DOC.onSnapshot(snap => {

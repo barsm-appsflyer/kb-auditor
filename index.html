@@ -148,6 +148,41 @@
         p => applyLinkCache(p.new.value))
       .subscribe();
 
+    // ── Discrepancy cache ─────────────────────────────────────────────────────
+    window._discCache = null;
+    window._discFixed = new Set();
+    window._discIntentional = [];
+
+    function applyDiscCacheData(data) {
+      if (!data || !data.ts) return;
+      window._discCache = data;
+      const btn   = document.getElementById('loadDiscCacheBtn');
+      const label = document.getElementById('discCacheDateLabel');
+      if (btn)   btn.style.display = 'inline-block';
+      if (label) label.textContent = new Date(data.ts).toLocaleDateString();
+    }
+    function applyDiscFixedData(data) {
+      window._discFixed = new Set((data && data.keys) || []);
+    }
+    function applyDiscIntentionalData(data) {
+      window._discIntentional = (data && data.items) || [];
+      if (typeof renderDiscLog === 'function') renderDiscLog();
+      const cnt = document.getElementById('discLogCount');
+      if (cnt) cnt.textContent = window._discIntentional.length;
+    }
+    sbGet('discrepancy_cache').then(applyDiscCacheData);
+    sbGet('discrepancy_fixed').then(applyDiscFixedData);
+    sbGet('discrepancy_intentional').then(applyDiscIntentionalData);
+    sb.channel('disc-cache-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.discrepancy_cache' },
+        p => applyDiscCacheData(p.new.value)).subscribe();
+    sb.channel('disc-fixed-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.discrepancy_fixed' },
+        p => applyDiscFixedData(p.new.value)).subscribe();
+    sb.channel('disc-intent-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.discrepancy_intentional' },
+        p => applyDiscIntentionalData(p.new.value)).subscribe();
+
     // ── Helper functions (keep same names — rest of code unchanged) ───────────
     function fbSaveFixed(set) {
       window._fixedSet = set;
@@ -419,6 +454,55 @@
 
     /* Spell check action column */
     th:last-child, td:last-child { white-space: nowrap; width: 1%; }
+
+    /* ── Discrepancy Tab ────────────────────────────────────────────────────── */
+    .disc-filter-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0 16px; }
+    .disc-filter-label { font-size:12px; color:#888; font-weight:500; }
+    .disc-filter-select { font-size:12px; padding:5px 10px; border:1.5px solid #d0d0d5; border-radius:8px; background:#fff; color:#333; cursor:pointer; }
+    .disc-filter-select:focus { border-color:#0071e3; outline:none; }
+    .disc-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .disc-table th { background:#f5f5f7; color:#666; font-weight:600; font-size:12px; text-align:left; padding:10px 12px; border-bottom:1.5px solid #e0e0e5; white-space:nowrap; }
+    .disc-table td { padding:11px 12px; border-bottom:1px solid #f0f0f5; vertical-align:top; }
+    .disc-table tbody tr:hover td { background:#fafafe; }
+    .disc-type-badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+    .disc-type-a { background:#e0f0ff; color:#0058b3; }
+    .disc-type-b { background:#f0e8ff; color:#6929c4; }
+    .disc-type-c { background:#fff3e0; color:#c45200; }
+    .disc-type-d { background:#ffeaea; color:#b91c1c; }
+    .disc-type-e { background:#fefce8; color:#92400e; border:1px solid #fde68a; }
+    .disc-sev-badge { display:inline-block; font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; margin-left:4px; }
+    .disc-sev-high   { background:#fee2e2; color:#b91c1c; }
+    .disc-sev-medium { background:#fef3c7; color:#92400e; }
+    .disc-sev-low    { background:#f0fdf4; color:#166534; }
+    .disc-wrong-text { font-size:12px; background:#fff5f5; border:1px solid #fecaca; border-radius:6px; padding:6px 9px; color:#7f1d1d; max-width:220px; word-break:break-word; line-height:1.5; }
+    .disc-fix-text   { font-size:12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:6px 9px; color:#14532d; max-width:220px; word-break:break-word; line-height:1.5; }
+    .disc-why-text   { font-size:12px; color:#555; max-width:200px; line-height:1.5; }
+    .disc-article-link { color:#0071e3; text-decoration:none; font-weight:600; font-size:13px; display:block; margin-bottom:3px; }
+    .disc-article-link:hover { text-decoration:underline; }
+    .disc-source-link { color:#666; text-decoration:none; font-size:11px; }
+    .disc-source-link:hover { color:#0071e3; text-decoration:underline; }
+    .disc-actions { display:flex; flex-direction:column; gap:5px; min-width:110px; }
+    .btn-fixed-disc { background:#e8f8ec; color:#217a3b; border:1.5px solid #86efac; font-size:11px; font-weight:700; padding:5px 10px; border-radius:7px; cursor:pointer; white-space:nowrap; transition:all 0.12s; }
+    .btn-fixed-disc:hover { background:#217a3b; color:#fff; }
+    .btn-intentional { background:#f5f0ff; color:#6929c4; border:1.5px solid #d8b4fe; font-size:11px; font-weight:700; padding:5px 10px; border-radius:7px; cursor:pointer; white-space:nowrap; transition:all 0.12s; }
+    .btn-intentional:hover { background:#6929c4; color:#fff; }
+    .disc-log-panel { margin-top:40px; border:1.5px solid #e0e0e5; border-radius:12px; background:#fff; overflow:hidden; }
+    .disc-log-header { padding:14px 18px; background:#f9f9fb; display:flex; align-items:center; justify-content:space-between; cursor:pointer; font-size:13px; font-weight:600; color:#444; border-bottom:1px solid #e8e8ed; user-select:none; }
+    .disc-log-header:hover { background:#f0f0f5; }
+    .disc-log-body { display:none; padding:16px 18px; }
+    .disc-log-body.open { display:block; }
+    .disc-log-empty { font-size:13px; color:#999; font-style:italic; padding:8px 0; }
+    .disc-log-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .disc-log-table th { color:#888; font-weight:600; padding:7px 10px; border-bottom:1.5px solid #e8e8ed; text-align:left; }
+    .disc-log-table td { padding:8px 10px; border-bottom:1px solid #f0f0f5; vertical-align:top; color:#555; }
+    .disc-log-table tr:last-child td { border-bottom:none; }
+    .disc-log-count { display:inline-block; background:#e8e8f0; color:#555; border-radius:10px; padding:1px 8px; font-size:12px; font-weight:600; min-width:20px; text-align:center; }
+    .btn-unintentional { font-size:11px; color:#999; background:none; border:1px solid #ddd; border-radius:5px; padding:3px 7px; cursor:pointer; }
+    .btn-unintentional:hover { color:#b91c1c; border-color:#fca5a5; }
+    .disc-empty-state { text-align:center; padding:48px 24px; color:#aaa; }
+    .disc-empty-state .disc-empty-icon { font-size:36px; display:block; margin-bottom:10px; }
+    .disc-summary-bar { font-size:12px; color:#666; margin-bottom:12px; }
+    .disc-summary-bar b { color:#1d1d1f; }
   </style>
 </head>
 <body>
@@ -440,6 +524,7 @@
   <div class="mode-tab" onclick="setMode('search',this)" title="Full-text search across the AppsFlyer Knowledge Base">🔍 Search</div>
   <div class="mode-tab" onclick="setMode('dict',this)" title="Manage your custom word list — words here are silently skipped during spell checking">📖 Dictionary</div>
   <div class="mode-tab" onclick="setMode('link',this)" title="Scan all articles for broken, redirected, or unverifiable hyperlinks">🔗 Link Checker</div>
+  <div class="mode-tab" onclick="setMode('discrepancy',this)" title="AI-powered scan: contradictory facts, outdated limitations, and platform parity gaps across articles in the same section and audience">⚡ Discrepancies</div>
 </div>
 
 <!-- ═══ SPELL CHECK ═══ -->
@@ -893,6 +978,25 @@ function setMode(mode, tab) {
     } else {
       const actionable = linkResults.filter(r => r.status !== "ok" && r.status !== "unverifiable").length;
       setStatus(`Checking links… ${actionable} actionable issue${actionable !== 1 ? "s" : ""} so far.`);
+    }
+  } else if (mode === 'discrepancy') {
+    // Populate section filter from cached data if available
+    const secSel = document.getElementById('discFilterDomain');
+    if (secSel && secSel.options.length <= 1 && window._discCache && window._discCache.items) {
+      const sections = [...new Set(window._discCache.items.map(i => i.section).filter(Boolean))].sort();
+      sections.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; secSel.appendChild(o); });
+    }
+    // Update cache date label
+    if (window._discCache && window._discCache.ts) {
+      const lbl = document.getElementById('discCacheDateLabel');
+      if (lbl) lbl.textContent = new Date(window._discCache.ts).toLocaleDateString();
+    }
+    // Auto-load if cache exists and nothing shown yet
+    if (discAllResults.length === 0 && window._discCache && window._discCache.items && window._discCache.items.length > 0) {
+      loadDiscCache();
+    } else {
+      renderDiscLog();
+      setStatus('Discrepancy tab ready.');
     }
   } else {
     resetResults();
@@ -2968,6 +3072,234 @@ async function loadTeamScan() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// DISCREPANCY TAB
+// ══════════════════════════════════════════════════════════════════════════
+const MAKE_DISC_WEBHOOK = 'https://hook.eu1.make.com/PLACEHOLDER_REPLACE_WITH_REAL_WEBHOOK';
+
+let discAllResults  = [];   // full unfiltered set from cache
+let discShown       = [];   // after filters applied
+
+function loadDiscCache() {
+  const data = window._discCache;
+  if (!data || !data.items) {
+    setStatus('No discrepancy scan cached yet. Run a fresh scan first.');
+    return;
+  }
+  discAllResults = (data.items || []).filter(item => {
+    const key = 'disc|' + item.id;
+    return !window._discFixed.has(key) &&
+           !window._discIntentional.find(i => i.id === item.id);
+  });
+  applyDiscFilters();
+  const d = new Date(data.ts).toLocaleString();
+  setStatus(`Loaded discrepancy scan from ${d} — ${discAllResults.length} open issue${discAllResults.length !== 1 ? 's' : ''}.`);
+}
+
+function applyDiscFilters() {
+  const fType  = document.getElementById('discFilterType').value;
+  const fSev   = document.getElementById('discFilterSev').value;
+  const fDom   = document.getElementById('discFilterDomain').value;
+  const fAud   = document.getElementById('discFilterAudience').value;
+  discShown = discAllResults.filter(item => {
+    if (fType !== 'all' && item.type !== fType) return false;
+    if (fSev  !== 'all' && item.severity !== fSev) return false;
+    if (fDom  !== 'all' && item.section !== fDom) return false;
+    if (fAud  !== 'all' && item.audience !== fAud) return false;
+    return true;
+  });
+  renderDiscResults();
+}
+
+function renderDiscResults() {
+  const tbody = document.getElementById('discResultsBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const summaryBar = document.getElementById('discSummaryBar');
+  if (discShown.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8">
+      <div class="disc-empty-state">
+        <span class="disc-empty-icon">✅</span>
+        <div>${discAllResults.length === 0 ? 'No scan loaded yet — click <b>Load Last Scan</b> or <b>Run Fresh Scan</b>.' : 'No issues match the current filters.'}</div>
+      </div></td></tr>`;
+    if (summaryBar) summaryBar.textContent = '';
+    return;
+  }
+  if (summaryBar) {
+    const high = discShown.filter(i => i.severity === 'high').length;
+    const med  = discShown.filter(i => i.severity === 'medium').length;
+    summaryBar.innerHTML = `Showing <b>${discShown.length}</b> issue${discShown.length !== 1 ? 's' : ''} &nbsp;·&nbsp; <span style="color:#b91c1c;font-weight:600">${high} high</span> &nbsp;·&nbsp; <span style="color:#92400e;font-weight:600">${med} medium</span>`;
+  }
+  discShown.forEach(item => appendDiscRow(item));
+  renderDiscLog();
+}
+
+function appendDiscRow(item) {
+  const tbody = document.getElementById('discResultsBody');
+  if (!tbody) return;
+  const typeLabels = { A:'A — Multi-article', B:'B — Platform parity', C:'C — Outdated limit', D:'D — Wrong value', E:'E — Intra-article' };
+  const typeClass  = { A:'disc-type-a', B:'disc-type-b', C:'disc-type-c', D:'disc-type-d', E:'disc-type-e' };
+  const sevClass   = { high:'disc-sev-high', medium:'disc-sev-medium', low:'disc-sev-low' };
+  const sourceCell = item.conflicting_url
+    ? `<a href="${item.conflicting_url}" target="_blank" class="disc-source-link">↗ ${escapeHtml(item.conflicting_title || 'Conflicting article')}</a>`
+    : `<span style="color:#aaa;font-size:11px;">${item.type === 'E' ? 'Same article' : item.type === 'D' ? 'DevHub' : '—'}</span>`;
+  const tr = document.createElement('tr');
+  tr.id = 'disc-row-' + item.id;
+  tr.innerHTML = `
+    <td>
+      <a href="${item.article_url}" target="_blank" class="disc-article-link">${escapeHtml(item.article_title)}</a>
+      <span style="font-size:11px;color:#aaa;">${item.audience} · ${item.section}</span>
+    </td>
+    <td>
+      <span class="disc-type-badge ${typeClass[item.type] || ''}">${typeLabels[item.type] || item.type}</span>
+      <span class="disc-sev-badge ${sevClass[item.severity] || ''}">${item.severity}</span>
+    </td>
+    <td><div class="disc-wrong-text">${escapeHtml(item.wrong_text || '—')}</div></td>
+    <td><div class="disc-fix-text">${escapeHtml(item.suggested_fix || '—')}</div></td>
+    <td><div class="disc-why-text">${escapeHtml(item.why_flagged || '—')}</div></td>
+    <td>${sourceCell}</td>
+    <td>
+      <div class="disc-actions">
+        <button class="btn-fixed-disc" onclick="markDiscFixed('${item.id}')" title="Mark as fixed — row disappears and won't reappear in future scans">✓ Fixed</button>
+        <button class="btn-intentional" onclick="markDiscIntentional('${item.id}')" title="Mark as intentional — suppressed from future scans and logged below">Intentional ✓</button>
+      </div>
+    </td>`;
+  tbody.appendChild(tr);
+}
+
+function markDiscFixed(id) {
+  window._discFixed.add('disc|' + id);
+  sbSet('discrepancy_fixed', { keys: [...window._discFixed] }).catch(console.error);
+  const row = document.getElementById('disc-row-' + id);
+  if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+  discAllResults = discAllResults.filter(i => i.id !== id);
+  discShown      = discShown.filter(i => i.id !== id);
+  updateDiscSummary();
+}
+
+function markDiscIntentional(id) {
+  const item = discAllResults.find(i => i.id === id);
+  if (!item) return;
+  const note = prompt(`Optional: Why is this intentional?\n\n"${item.wrong_text}"\n\n(Leave blank to skip)`);
+  if (note === null) return; // cancelled
+  const entry = {
+    id: item.id,
+    article_url:   item.article_url,
+    article_title: item.article_title,
+    wrong_text:    item.wrong_text,
+    note:          note || '',
+    dismissed_by:  'Team member',
+    dismissed_at:  new Date().toISOString()
+  };
+  window._discIntentional = window._discIntentional.filter(i => i.id !== id);
+  window._discIntentional.unshift(entry);
+  sbSet('discrepancy_intentional', { items: window._discIntentional }).catch(console.error);
+  const row = document.getElementById('disc-row-' + id);
+  if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+  discAllResults = discAllResults.filter(i => i.id !== id);
+  discShown      = discShown.filter(i => i.id !== id);
+  updateDiscSummary();
+  renderDiscLog();
+  const cnt = document.getElementById('discLogCount');
+  if (cnt) cnt.textContent = window._discIntentional.length;
+  // Auto-open the log so team sees it was added
+  const logBody = document.getElementById('discLogBody');
+  if (logBody && !logBody.classList.contains('open')) toggleDiscLog();
+}
+
+function undoIntentional(id) {
+  window._discIntentional = window._discIntentional.filter(i => i.id !== id);
+  sbSet('discrepancy_intentional', { items: window._discIntentional }).catch(console.error);
+  renderDiscLog();
+  const cnt = document.getElementById('discLogCount');
+  if (cnt) cnt.textContent = window._discIntentional.length;
+  setStatus('Removed from intentional list — will appear in next scan.');
+}
+
+function updateDiscSummary() {
+  const summaryBar = document.getElementById('discSummaryBar');
+  if (!summaryBar) return;
+  if (discShown.length === 0) { summaryBar.textContent = ''; return; }
+  const high = discShown.filter(i => i.severity === 'high').length;
+  const med  = discShown.filter(i => i.severity === 'medium').length;
+  summaryBar.innerHTML = `Showing <b>${discShown.length}</b> issue${discShown.length !== 1 ? 's' : ''} &nbsp;·&nbsp; <span style="color:#b91c1c;font-weight:600">${high} high</span> &nbsp;·&nbsp; <span style="color:#92400e;font-weight:600">${med} medium</span>`;
+}
+
+function renderDiscLog() {
+  const tbody = document.getElementById('discLogTableBody');
+  if (!tbody) return;
+  const cnt = document.getElementById('discLogCount');
+  if (cnt) cnt.textContent = window._discIntentional.length;
+  if (window._discIntentional.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="disc-log-empty">No intentional dismissals yet. When you click "Intentional ✓" on any row, it appears here — visible to the whole team.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  window._discIntentional.forEach(entry => {
+    const tr = document.createElement('tr');
+    const date = entry.dismissed_at ? new Date(entry.dismissed_at).toLocaleDateString() : '—';
+    tr.innerHTML = `
+      <td><a href="${entry.article_url}" target="_blank" style="color:#0071e3;text-decoration:none;">${escapeHtml(entry.article_title)}</a></td>
+      <td style="color:#7f1d1d;font-style:italic;">"${escapeHtml(entry.wrong_text || '—')}"</td>
+      <td>${escapeHtml(entry.note || '—')}</td>
+      <td>${escapeHtml(entry.dismissed_by || '—')}</td>
+      <td style="white-space:nowrap;">${date}</td>
+      <td><button class="btn-unintentional" onclick="undoIntentional('${entry.id}')" title="Remove from intentional list — will reappear in next scan">↩ Undo</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function toggleDiscLog() {
+  const body    = document.getElementById('discLogBody');
+  const chevron = document.getElementById('discLogChevron');
+  if (!body) return;
+  body.classList.toggle('open');
+  if (chevron) chevron.textContent = body.classList.contains('open') ? '▲' : '▼';
+}
+
+async function triggerFreshScan() {
+  const btn = document.getElementById('discRunBtn');
+  if (btn) { btn.textContent = '⏳ Triggering…'; btn.disabled = true; }
+  try {
+    const resp = await fetch(MAKE_DISC_WEBHOOK, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ triggered_at: new Date().toISOString() }) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    setStatus('✅ Scan triggered — Make.com scenario is running. Results will appear in Supabase when complete (typically 10–15 min). Reload the tab to see them.');
+    if (btn) { btn.textContent = '✅ Triggered!'; setTimeout(() => { btn.textContent = '▶ Run Fresh Scan'; btn.disabled = false; }, 4000); }
+  } catch(e) {
+    setStatus('Could not trigger scan: ' + e.message + ' — check the webhook URL.');
+    if (btn) { btn.textContent = '▶ Run Fresh Scan'; btn.disabled = false; }
+  }
+}
+
+function exportDiscCSV() {
+  if (!discShown.length) { alert('No results to export.'); return; }
+  const headers = ['Type','Severity','Audience','Section','Article','Article URL','Wrong Text','Suggested Fix','Why Flagged','Conflicting Article','Conflicting URL'];
+  const rows = discShown.map(i => [
+    i.type, i.severity, i.audience, i.section,
+    i.article_title, i.article_url,
+    i.wrong_text, i.suggested_fix, i.why_flagged,
+    i.conflicting_title || '', i.conflicting_url || ''
+  ].map(v => `"${(v||'').replace(/"/g,'""')}"`).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'kb-discrepancies-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function exportDiscJSON() {
+  if (!discShown.length) { alert('No results to export.'); return; }
+  const a = document.createElement('a');
+  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify({ ts: new Date().toISOString(), items: discShown }, null, 2));
+  a.download = 'kb-discrepancies-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 async function publishTeamResults() {
   if (!spellResults.length) { alert("No results to publish. Run a scan first."); return; }
 
@@ -3051,6 +3383,112 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
 // ═══════════════════════════════════════════════════════════════════
 
 </script>
+
+
+<!-- ══ DISCREPANCY PANEL ══════════════════════════════════════════════════ -->
+<div class="mode-panel" id="panel-discrepancy">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>⚡ Discrepancy Scanner</h2>
+      <p>AI-powered scan that detects contradictions, outdated limitations, and platform parity gaps across articles <strong>within the same section and audience</strong>. Cross-audience differences (Marketers vs. Partners vs. DevHub) are always intentional and are never flagged.</p>
+      <p style="margin-top:8px;font-size:12px;color:#999;">Scans run server-side via Make.com using Anthropic's API — no personal tokens consumed. Results are shared across the team via Supabase.</p>
+    </div>
+
+    <div class="scan-controls">
+      <button class="btn btn-primary" id="discRunBtn" onclick="triggerFreshScan()" title="Trigger a new scan via Make.com webhook — runs server-side, results appear in ~10–15 min">▶ Run Fresh Scan</button>
+      <button class="btn btn-light btn-sm" id="loadDiscCacheBtn" onclick="loadDiscCache()" title="Reload the results from the last completed scan">📂 Load Last Scan (<span id="discCacheDateLabel">—</span>)</button>
+      <button class="btn btn-light btn-sm" onclick="exportDiscCSV()" title="Download results as CSV">⬇ Export CSV</button>
+      <button class="btn btn-light btn-sm" onclick="exportDiscJSON()" title="Download results as JSON">⬇ Export JSON</button>
+      <span style="font-size:12px;color:#aaa;margin-left:6px;">Results are cached — no need to re-run each session.</span>
+    </div>
+
+    <div class="disc-filter-bar">
+      <label>Type
+        <select id="discFilterType" onchange="applyDiscFilters()">
+          <option value="all">All types</option>
+          <option value="A">A — Multi-article fact spread</option>
+          <option value="B">B — Platform parity gap</option>
+          <option value="C">C — Outdated limitation</option>
+          <option value="D">D — Wrong technical value</option>
+          <option value="E">E — Intra-article contradiction</option>
+        </select>
+      </label>
+      <label>Severity
+        <select id="discFilterSev" onchange="applyDiscFilters()">
+          <option value="all">All severities</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+      <label>Section
+        <select id="discFilterDomain" onchange="applyDiscFilters()">
+          <option value="all">All sections</option>
+        </select>
+      </label>
+      <label>Audience
+        <select id="discFilterAudience" onchange="applyDiscFilters()">
+          <option value="all">All audiences</option>
+          <option value="marketers">Marketers</option>
+          <option value="partners">Partners</option>
+          <option value="devhub">DevHub</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="disc-summary-bar" id="discSummaryBar"></div>
+
+    <table class="disc-table">
+      <thead>
+        <tr>
+          <th style="width:18%">Article</th>
+          <th style="width:12%">Type / Severity</th>
+          <th style="width:16%">Wrong Text</th>
+          <th style="width:16%">Suggested Fix</th>
+          <th style="width:16%">Why Flagged</th>
+          <th style="width:12%">Conflicting Source</th>
+          <th style="width:10%">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="discResultsBody">
+        <tr><td colspan="7">
+          <div class="disc-empty-state">
+            <span class="disc-empty-icon">⚡</span>
+            <div>No scan loaded yet — click <b>Load Last Scan</b> or <b>Run Fresh Scan</b>.</div>
+          </div>
+        </td></tr>
+      </tbody>
+    </table>
+
+    <!-- Intentional Log sub-panel -->
+    <div class="disc-log-panel">
+      <div class="disc-log-header" onclick="toggleDiscLog()">
+        <span>📋 Intentional Dismissals Log &nbsp;<span class="disc-log-count" id="discLogCount">0</span></span>
+        <span id="discLogChevron">▼</span>
+      </div>
+      <div class="disc-log-body" id="discLogBody">
+        <p style="font-size:12px;color:#666;margin:0 0 10px 0;">Items marked "Intentional ✓" are suppressed from future scans and logged here so the whole team can see the decision. Click ↩ Undo to re-enable scanning for that item.</p>
+        <table class="disc-log-table">
+          <thead>
+            <tr>
+              <th>Article</th>
+              <th>Flagged Text</th>
+              <th>Note / Reason</th>
+              <th>Dismissed By</th>
+              <th>Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="discLogTableBody">
+            <tr><td colspan="6"><div class="disc-log-empty">No intentional dismissals yet. When you click "Intentional ✓" on any row, it appears here — visible to the whole team.</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+<!-- ══ /DISCREPANCY PANEL ═════════════════════════════════════════════════ -->
 
 
 </body>

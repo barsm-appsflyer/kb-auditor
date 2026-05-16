@@ -4,27 +4,13 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>AF KB Auditor</title>
-  <!-- Firebase compat SDKs -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <!-- Supabase SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    const firebaseConfig = {
-      apiKey: "AIzaSyATqwPycjfg3yeez-Og-fHYaB4L7DPCK6A",
-      authDomain: "kb-auditor.firebaseapp.com",
-      projectId: "kb-auditor",
-      storageBucket: "kb-auditor.firebasestorage.app",
-      messagingSenderId: "276509883949",
-      appId: "1:276509883949:web:9e039402db05dbd60082a4"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-
-    // ── Document references ───────────────────────────────────────────────────
-    const FIXED_DOC       = db.collection('shared').doc('fixed');
-    const OWNERS_DOC      = db.collection('shared').doc('owners');
-    const DICT_DOC        = db.collection('shared').doc('dictionary');
-    const SPELL_CACHE_DOC = db.collection('spellcheck').doc('cache');
-    const LINK_CACHE_DOC  = db.collection('linkchecker').doc('cache');
+    const sb = supabase.createClient(
+      'https://lslwlzodxdutpjdrkoyk.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzbHdsem9keGR1dHBqZHJrb3lrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4ODM3NjQsImV4cCI6MjA5NDQ1OTc2NH0.9syb90FDppRaOwiWkp8LVVMG5u0ZNqAIjEfX8L6qJvs'
+    );
 
     // ── In-memory state ───────────────────────────────────────────────────────
     try { window._fixedSet = new Set(JSON.parse(localStorage.getItem('kbFixedItems') || '[]')); }
@@ -33,16 +19,29 @@
     window._spellCache     = null;
     window._linkCache      = null;
 
-    // Load owner overrides immediately from localStorage (works even when Firebase is offline)
+    // Load owner overrides immediately from localStorage (works offline too)
     try { window._ownerOverrides = JSON.parse(localStorage.getItem('kbOwnerOverrides') || '{}'); }
     catch(e) { window._ownerOverrides = {}; }
 
+    // ── Core helpers ──────────────────────────────────────────────────────────
+    async function sbGet(key) {
+      const { data, error } = await sb.from('kv_store').select('value').eq('key', key).single();
+      if (error) { console.warn('sbGet', key, error.message); return null; }
+      return data ? data.value : null;
+    }
+    async function sbSet(key, value) {
+      const { error } = await sb.from('kv_store')
+        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+      if (error) {
+        console.warn('sbSet', key, error.message);
+        throw error;
+      }
+    }
+
     // ── Fixed items ───────────────────────────────────────────────────────────
-    FIXED_DOC.onSnapshot(snap => {
-      const data = (snap && snap.exists) ? snap.data() : {};
-      window._fixedSet = new Set(data.keys || []);
+    function applyFixedData(data) {
+      window._fixedSet = new Set((data && data.keys) || []);
       if (typeof FIXED_ITEMS !== 'undefined') FIXED_ITEMS = window._fixedSet;
-      // Auto-hide rows marked fixed by another user
       document.querySelectorAll('#resultsBody tr').forEach(row => {
         const btn = row.querySelector('.btn-fixed');
         if (!btn) return;
@@ -53,18 +52,19 @@
           setTimeout(() => row.remove(), 300);
         }
       });
-    });
+    }
+    sbGet('fixed').then(applyFixedData);
+    sb.channel('fixed-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.fixed' },
+        p => applyFixedData(p.new.value))
+      .subscribe();
 
     // ── Owner overrides ───────────────────────────────────────────────────────
-    OWNERS_DOC.onSnapshot(snap => {
-      const data = (snap && snap.exists) ? snap.data() : {};
-      const serverOverrides = data.overrides || {};
-      // Load localStorage backup (survives Firebase failures)
+    function applyOwnersData(data) {
+      const serverOverrides = (data && data.overrides) || {};
       let localBackup = {};
       try { localBackup = JSON.parse(localStorage.getItem('kbOwnerOverrides') || '{}'); } catch(e) {}
-      // Merge: local fills gaps, server wins on conflicts (source of truth for team sync)
       window._ownerOverrides = Object.assign({}, localBackup, serverOverrides);
-      // Keep localStorage in sync with server when Firebase is working
       if (Object.keys(serverOverrides).length > 0) {
         try { localStorage.setItem('kbOwnerOverrides', JSON.stringify(window._ownerOverrides)); } catch(e) {}
       }
@@ -76,94 +76,111 @@
           badge.textContent = (o || '—') + ' ▾';
         }
       });
-    });
+    }
+    sbGet('owners').then(applyOwnersData);
+    sb.channel('owners-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.owners' },
+        p => applyOwnersData(p.new.value))
+      .subscribe();
 
     // ── Dictionary ────────────────────────────────────────────────────────────
-    DICT_DOC.onSnapshot(snap => {
-      const data = (snap && snap.exists) ? snap.data() : {};
-      window._customWords = data.words || [];
+    function applyDictData(data) {
+      window._customWords = (data && data.words) || [];
       if (typeof buildIgnoreSet === 'function') {
         if (typeof IGNORED_WORDS !== 'undefined') IGNORED_WORDS = buildIgnoreSet();
         if (typeof renderDictPanel === 'function') renderDictPanel();
         if (typeof spellResults !== 'undefined' && spellResults.length > 0) refreshSpellResults();
       }
-    });
+    }
+    sbGet('dictionary').then(applyDictData);
+    sb.channel('dict-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.dictionary' },
+        p => applyDictData(p.new.value))
+      .subscribe();
 
     // ── Spell cache — auto-load on first open ─────────────────────────────────
     window._spellAutoLoaded = false;
-    SPELL_CACHE_DOC.onSnapshot(snap => {
-      if (snap && snap.exists) {
-        window._spellCache = snap.data();
-        const btn   = document.getElementById('loadCacheBtn');
-        const label = document.getElementById('cacheDateLabel');
-        if (btn)   btn.style.display = 'inline-block';
-        if (label && window._spellCache.ts)
-          label.textContent = new Date(window._spellCache.ts).toLocaleDateString();
-        if (!window._spellAutoLoaded) {
-          window._spellAutoLoaded = true;
-          setTimeout(() => {
-            if (typeof isRunning !== 'undefined' && !isRunning &&
-                typeof spellResults !== 'undefined' && spellResults.length === 0)
-              loadCachedScan();
-          }, 600);
-        }
+    function applySpellCache(data) {
+      if (!data) return;
+      window._spellCache = data;
+      const btn   = document.getElementById('loadCacheBtn');
+      const label = document.getElementById('cacheDateLabel');
+      if (btn)   btn.style.display = 'inline-block';
+      if (label && window._spellCache.ts)
+        label.textContent = new Date(window._spellCache.ts).toLocaleDateString();
+      if (!window._spellAutoLoaded) {
+        window._spellAutoLoaded = true;
+        setTimeout(() => {
+          if (typeof isRunning !== 'undefined' && !isRunning &&
+              typeof spellResults !== 'undefined' && spellResults.length === 0)
+            loadCachedScan();
+        }, 600);
       }
-    });
+    }
+    sbGet('spell_cache').then(applySpellCache);
+    sb.channel('spell-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.spell_cache' },
+        p => applySpellCache(p.new.value))
+      .subscribe();
 
     // ── Link cache — auto-load on first open ──────────────────────────────────
     window._linkAutoLoaded = false;
-    LINK_CACHE_DOC.onSnapshot(snap => {
-      if (snap && snap.exists) {
-        window._linkCache = snap.data();
-        const btn   = document.getElementById('loadLinkCacheBtn');
-        const label = document.getElementById('linkCacheDateLabel');
-        if (btn)   btn.style.display = 'inline-block';
-        if (label && window._linkCache.ts)
-          label.textContent = new Date(window._linkCache.ts).toLocaleDateString();
-        if (!window._linkAutoLoaded) {
-          window._linkAutoLoaded = true;
-          setTimeout(() => {
-            if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
-                typeof linkResults !== 'undefined' && linkResults.length === 0)
-              loadCachedLinks();
-          }, 600);
-        }
+    function applyLinkCache(data) {
+      if (!data) return;
+      window._linkCache = data;
+      const btn   = document.getElementById('loadLinkCacheBtn');
+      const label = document.getElementById('linkCacheDateLabel');
+      if (btn)   btn.style.display = 'inline-block';
+      if (label && window._linkCache.ts)
+        label.textContent = new Date(window._linkCache.ts).toLocaleDateString();
+      if (!window._linkAutoLoaded) {
+        window._linkAutoLoaded = true;
+        setTimeout(() => {
+          if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
+              typeof linkResults !== 'undefined' && linkResults.length === 0)
+            loadCachedLinks();
+        }, 600);
       }
-    });
+    }
+    sbGet('link_cache').then(applyLinkCache);
+    sb.channel('link-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.link_cache' },
+        p => applyLinkCache(p.new.value))
+      .subscribe();
 
-    // ── Helper functions ──────────────────────────────────────────────────────
+    // ── Helper functions (keep same names — rest of code unchanged) ───────────
     function fbSaveFixed(set) {
       window._fixedSet = set;
-      FIXED_DOC.set({ keys: [...set] }).catch(console.error);
+      sbSet('fixed', { keys: [...set] }).catch(console.error);
     }
     function fbSaveOwnerOverride(articleUrl, ownerName) {
       window._ownerOverrides[articleUrl] = ownerName;
       try { localStorage.setItem('kbOwnerOverrides', JSON.stringify(window._ownerOverrides)); } catch(e) {}
-      OWNERS_DOC.set({ overrides: window._ownerOverrides }).catch(console.error);
+      sbSet('owners', { overrides: window._ownerOverrides }).catch(console.error);
     }
     function fbSaveDictionary(words) {
       window._customWords = words;
-      DICT_DOC.set({ words }).catch(console.error);
+      sbSet('dictionary', { words }).catch(console.error);
       try { localStorage.setItem('kbDictCustom', JSON.stringify(words)); } catch(e) {}
     }
     function fbSaveSpellCache(cache) {
       window._spellCache = cache;
-      SPELL_CACHE_DOC.set(cache).catch(e => {
-        console.warn('Spell cache too large for Firestore, falling back to localStorage', e);
+      sbSet('spell_cache', cache).catch(e => {
+        console.warn('Spell cache save failed, using localStorage', e);
         try { localStorage.setItem('kbSpellCache', JSON.stringify(cache)); } catch(_) {}
       });
     }
     function fbSaveLinkCache(cache) {
       window._linkCache = cache;
-      LINK_CACHE_DOC.set(cache).catch(e => {
-        console.warn('Link cache too large for Firestore, falling back to localStorage', e);
+      sbSet('link_cache', cache).catch(e => {
+        console.warn('Link cache save failed, using localStorage', e);
         try { localStorage.setItem('kbLinkCache', JSON.stringify(cache)); } catch(_) {}
       });
     }
 
-    // One-time migration: if Firebase dict is empty, pull from GAS/localStorage
-    DICT_DOC.get().then(snap => {
-      if (!snap.exists || !(snap.data().words || []).length) {
+    // One-time migration: if Supabase dict is empty, pull from localStorage/GAS
+    sbGet('dictionary').then(data => {
+      if (!(data && (data.words || []).length)) {
         let local = [];
         try { local = JSON.parse(localStorage.getItem('kbDictCustom') || '[]'); } catch(e) {}
         const gasUrl = "https://script.google.com/a/macros/appsflyer.com/s/AKfycbx_59ZskpElFzIsJQM7t6XAzaUhhxxfzJOa83S1MjP2NTl1WHugMYosvFIUwJVPr9p_Ig/exec?action=getDictionary";
@@ -2824,7 +2841,7 @@ updateCacheButton();
 updateLinkCacheButton();
 renderDictPanel();
 syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not running in GAS)
-initTeamSync();         // fetch shared team scan + dictionary from GitHub repo
+// initTeamSync() removed — replaced by Firebase sync
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TEAM SYNC — shared scan + dictionary stored as JSON files in the GitHub repo

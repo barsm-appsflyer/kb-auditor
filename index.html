@@ -101,7 +101,7 @@
     // ── Spell cache — auto-load on first open ─────────────────────────────────
     window._spellAutoLoaded = false;
     function applySpellCache(data) {
-      if (!data) return;
+      if (!data || !data.ts) return;
       window._spellCache = data;
       const btn   = document.getElementById('loadCacheBtn');
       const label = document.getElementById('cacheDateLabel');
@@ -126,7 +126,7 @@
     // ── Link cache — auto-load on first open ──────────────────────────────────
     window._linkAutoLoaded = false;
     function applyLinkCache(data) {
-      if (!data) return;
+      if (!data || !data.ts) return;
       window._linkCache = data;
       const btn   = document.getElementById('loadLinkCacheBtn');
       const label = document.getElementById('linkCacheDateLabel');
@@ -1038,6 +1038,11 @@ async function runFullScan() {
         console.warn(`Article ${i + 1} error:`, e.message);
         checked++;
         spellCheckedCount = checked;
+      }
+
+      // Auto-save every 25 articles so partial scans are recoverable
+      if (checked % 25 === 0) {
+        saveScanCache(spellResults, checked);
       }
     }
 

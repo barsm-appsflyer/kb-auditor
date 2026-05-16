@@ -980,6 +980,12 @@ function setMode(mode, tab) {
       setStatus(`Checking links… ${actionable} actionable issue${actionable !== 1 ? "s" : ""} so far.`);
     }
   } else if (mode === 'discrepancy') {
+    // Hide shared link/spell/search result elements
+    document.getElementById('summaryBar').style.display   = 'none';
+    document.getElementById('ownerFilterBar').style.display = 'none';
+    document.getElementById('loadMoreBar').style.display  = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('emptyState').style.display   = 'none';
     // Populate section filter from cached data if available
     const secSel = document.getElementById('discFilterDomain');
     if (secSel && secSel.options.length <= 1 && window._discCache && window._discCache.items) {

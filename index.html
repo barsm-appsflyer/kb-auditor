@@ -1164,6 +1164,7 @@ async function runFullScan() {
     setSpellCsvBtn(spellResults.length > 0);
     saveScanCache(spellResults, checked);
     showShareBtn();
+    publishTeamResults(true); // auto-publish to GitHub after every scan
 
   } catch (e) {
     setStatus("Error: " + e.message);
@@ -3306,12 +3307,13 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-async function publishTeamResults() {
-  if (!spellResults.length) { alert("No results to publish. Run a scan first."); return; }
+async function publishTeamResults(silent = false) {
+  if (!spellResults.length) { if (!silent) alert("No results to publish. Run a scan first."); return; }
 
   // Get or prompt for GitHub PAT
   let token = localStorage.getItem(GH_TOKEN_KEY) || "";
   if (!token) {
+    if (silent) return; // auto-publish: skip if no token stored yet
     token = prompt(
       "Enter your GitHub Personal Access Token (PAT) with repo write access.\n\n" +
       "Create one at: github.com/settings/tokens\n" +
@@ -3351,12 +3353,12 @@ async function publishTeamResults() {
   } catch(e) {
     if (btn) { btn.textContent = "❌ Failed — check token"; btn.disabled = false; }
     setTimeout(() => { if (btn) btn.textContent = "📤 Publish to Team"; }, 4000);
-    if (e.message.includes("401") || e.message.includes("403")) {
+    if (!silent && (e.message.includes("401") || e.message.includes("403"))) {
       if (confirm("Authentication failed. Your token may be invalid or expired.\n\nClear it and try again?")) {
         localStorage.removeItem(GH_TOKEN_KEY);
       }
     } else {
-      setStatus("Publish failed: " + e.message);
+      setStatus("Auto-publish failed: " + e.message);
     }
   }
 }

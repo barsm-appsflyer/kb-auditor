@@ -137,7 +137,8 @@
         window._linkAutoLoaded = true;
         setTimeout(() => {
           if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
-              typeof linkResults !== 'undefined' && linkResults.length === 0)
+              typeof linkResults !== 'undefined' && linkResults.length === 0 &&
+              typeof currentMode !== 'undefined' && currentMode === 'link')
             loadCachedLinks();
         }, 600);
       }
@@ -958,6 +959,8 @@ function setMode(mode, tab) {
     } else {
       setStatus(`Scanning… ${spellResults.length} issue${spellResults.length !== 1 ? "s" : ""} found so far.`);
     }
+  } else if (mode === "link" && linkResults.length === 0 && !isLinkRunning && window._linkCache) {
+    loadCachedLinks();
   } else if (mode === "link" && (linkResults.length > 0 || isLinkRunning)) {
     // Re-render accumulated link results — include unverifiable (may contain WIPs)
     resetResults();

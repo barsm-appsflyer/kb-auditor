@@ -83,6 +83,186 @@
         p => applyOwnersData(p.new.value))
       .subscribe();
 
+    // ── Trusted domains ───────────────────────────────────────────────────────
+    window._trustedDomains = [];
+    function applyTrustedDomainsData(data) {
+      window._trustedDomains = (data && data.domains) || [];
+      if (typeof renderDictPanel === 'function') renderDictPanel();
+    }
+    sbGet('trusted_domains').then(data => {
+      if (data && (data.domains || []).length) {
+        applyTrustedDomainsData(data);
+      } else {
+        // Seed defaults on first load
+        const defaults = [
+          // ── AppsFlyer own domains ──────────────────────────────────────
+          'appsflyer.com',
+          'evgen.appsflyer.com',
+
+          // ── Google ecosystem ───────────────────────────────────────────
+          'google.com','googleapis.com','googleusercontent.com',
+          'googleadservices.com','googlesyndication.com','doubleclick.net',
+          'gstatic.com','ggpht.com','youtube.com','gmail.com',
+
+          // ── Meta / Facebook ────────────────────────────────────────────
+          'facebook.com','fb.com','instagram.com','meta.com','fbcdn.net',
+
+          // ── Apple ──────────────────────────────────────────────────────
+          'apple.com','icloud.com','itunes.apple.com',
+
+          // ── Microsoft ──────────────────────────────────────────────────
+          'microsoft.com','azure.com','live.com','outlook.com','bing.com',
+          'xandr.com','appnexus.com',
+
+          // ── Amazon / AWS ───────────────────────────────────────────────
+          'amazon.com','amazonaws.com','awsstatic.com',
+
+          // ── TikTok / ByteDance ─────────────────────────────────────────
+          'tiktok.com','bytedance.com','pangle.io','tiktokglobalappservice.com',
+
+          // ── Snap ───────────────────────────────────────────────────────
+          'snap.com','snapchat.com',
+
+          // ── Twitter / X ────────────────────────────────────────────────
+          'twitter.com','x.com','t.co',
+
+          // ── Pinterest ──────────────────────────────────────────────────
+          'pinterest.com',
+
+          // ── LinkedIn ───────────────────────────────────────────────────
+          'linkedin.com',
+
+          // ── Reddit ─────────────────────────────────────────────────────
+          'reddit.com','reddithelp.com','redd.it',
+
+          // ── Mobile ad networks ─────────────────────────────────────────
+          'ironsource.com','is.com',
+          'applovin.com','max.applovin.com',
+          'unity.com','unity3d.com','unityads.unity3d.com',
+          'vungle.com',
+          'adcolony.com',
+          'chartboost.com',
+          'inmobi.com',
+          'mintegral.com','mindworks.cn',
+          'moloco.com',
+          'digitalturbine.com','loopme.com',
+          'liftoff.io',
+          'jampp.com',
+          'fyber.com',
+          'tapjoy.com',
+          'mobvista.com',
+          'yeahmobi.com',
+          'mobrain.com',
+          'mobsuccess.com',
+          'zoomd.com',
+          'smadex.com',
+          'remerge.io',
+          'retargetapp.com',
+          'criteo.com',
+          'thetradedesk.com','tradedesk.com',
+
+          // ── Asian ad networks / platforms ──────────────────────────────
+          'baidu.com',
+          'tencent.com','qq.com','wechat.com','weixin.qq.com',
+          'xiaomi.com','mi.com',
+          'huawei.com','hispace.huawei.com',
+          'oppo.com','heytap.com',
+          'vivo.com',
+          'samsung.com',
+          'kakao.com','kakaocorp.com',
+          'line.me','linecorp.com','naver.com',
+          'kwai.com','kuaishou.com',
+          'weibo.com','sinaimg.cn',
+
+          // ── DSPs / Programmatic ────────────────────────────────────────
+          'taboola.com',
+          'outbrain.com',
+          'smartadserver.com',
+          'pubmatic.com',
+          'openx.com',
+          'magnite.com','rubiconproject.com',
+          'indexexchange.com',
+          'smaato.com',
+          'conversantmedia.com','epsilon.com',
+          'liveramp.com',
+
+          // ── Measurement & verification ─────────────────────────────────
+          'nielsen.com','adsrvr.org',
+          'comscore.com',
+          'doubleverify.com',
+          'integralads.com','ias.com',
+          'moatads.com','oracle.com',
+          'adjust.com',
+          'branch.io',
+          'kochava.com',
+          'singular.net',
+
+          // ── Engagement / CRM / CDP ─────────────────────────────────────
+          'braze.com',
+          'clevertap.com',
+          'leanplum.com',
+          'onesignal.com',
+          'airship.com','urbanairship.com',
+          'iterable.com',
+          'localytics.com',
+          'segment.com','twilio.com',
+          'mparticle.com',
+          'amplitude.com',
+          'mixpanel.com',
+
+          // ── Cloud / data / storage ─────────────────────────────────────
+          'snowflake.com',
+          'databricks.com',
+          'fivetran.com',
+          'looker.com',
+          'tableau.com',
+
+          // ── Adobe ──────────────────────────────────────────────────────
+          'adobe.com','demdex.com','omniture.com','2o7.net',
+
+          // ── Salesforce / CRM ───────────────────────────────────────────
+          'salesforce.com','force.com','exacttarget.com','pardot.com',
+
+          // ── Developer / app store docs ─────────────────────────────────
+          'developer.android.com','play.google.com',
+          'developer.apple.com',
+          'docs.github.com','github.com','github.io',
+          'stackoverflow.com',
+
+          // ── Support & help portals ─────────────────────────────────────
+          'support.google.com','developers.google.com',
+          'help.twitter.com','business.reddithelp.com',
+          'ads.tiktok.com',
+          'business.facebook.com',
+          'help.instagram.com',
+          'business.linkedin.com',
+          'ads.pinterest.com',
+          'help.snapchat.com',
+          'help.apple.com',
+          'developer.huawei.com',
+
+          // ── Other known AF article destinations ────────────────────────
+          'zendesk.com',
+          'atlassian.com','jira.com','confluence.com',
+          'slack.com',
+          'zoom.us',
+          'firebase.google.com',
+          'awin.com',
+          'impact.com',
+          'rakuten.com',
+          'partnerize.com',
+          'hasoffers.com','tune.com',
+        ];
+        window._trustedDomains = defaults;
+        sbSet('trusted_domains', { domains: defaults }).catch(console.error);
+        if (typeof renderDictPanel === 'function') renderDictPanel();
+      }
+    });
+    sb.channel('trusted-domains-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.trusted_domains' },
+        p => applyTrustedDomainsData(p.new.value))
+      .subscribe();
+
     // ── Dictionary ────────────────────────────────────────────────────────────
     function applyDictData(data) {
       window._customWords = (data && data.words) || [];
@@ -657,6 +837,23 @@
         <strong style="color:#444;">Want a word added for everyone?</strong><br>
         Custom words only apply to your browser. To get a word added to the built-in list (so it's there by default for the whole team), just collect the words you want standardised and ask to update the tool — it's a quick change.
       </div>
+    </div>
+
+    <!-- ── Trusted Domains ── -->
+    <div style="max-width:680px; margin-top:36px; border-top:1px solid #e8e8ed; padding-top:24px;">
+      <h3 style="font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:6px;">🔗 Trusted Domains <span style="font-size:12px;font-weight:400;color:#888;">(Link Checker)</span></h3>
+      <p style="font-size:13px;color:#666;margin-bottom:14px;">Links pointing to these domains are silently skipped during link scanning — they won't appear as broken or redirected even if the checker can't verify them. Useful for third-party login pages and external platforms referenced intentionally in articles.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <input class="search-input" id="trustedDomainInput" type="text" placeholder="e.g. demdex.com or bank.demdex.com"
+          onkeydown="if(event.key==='Enter') addTrustedDomain()" style="font-family:monospace;font-size:13px;"/>
+        <button class="btn btn-primary" onclick="addTrustedDomain()">Add</button>
+      </div>
+
+      <div id="trustedDomainTags" class="flag-tags" style="margin-bottom:8px;">
+        <span style="font-size:12px;color:#aaa;font-style:italic;">Loading…</span>
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-top:6px;">Matching is domain-suffix: <code>appsflyer.com</code> covers <code>support.appsflyer.com</code>, <code>dev.appsflyer.com</code>, etc.</div>
     </div>
   </div>
 </div>
@@ -1293,10 +1490,18 @@ function cleanArticleBody(html) {
 //  Priority: manual override → keyword match → author ID (auto-discovered)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Known Zendesk updated_by_id → owner name (from author_lookup.csv)
+const KNOWN_AUTHOR_IDS = {
+  12257050249617: "Dori",
+  6668875779089:  "Ilana",
+  6998065863185:  "Elliot",
+};
+
 // Call once after fetchAllArticles() to seed _authorIdToOwner from keyword-matched articles.
-// No hard-coded user IDs needed — learns from articles already matched by keyword.
 function buildAuthorIdMap(articles) {
+  // Seed with confirmed IDs first
   if (!window._authorIdToOwner) window._authorIdToOwner = {};
+  Object.assign(window._authorIdToOwner, KNOWN_AUTHOR_IDS);
   for (const art of articles) {
     if (!art.updated_by_id) continue;
     const kw = getArticleOwnerByKeyword(art.title, art.html_url);
@@ -2011,6 +2216,39 @@ function clearCustomDictionary() {
   setStatus(`Cleared ${custom.length} custom word${custom.length !== 1 ? "s" : ""} from your dictionary.`);
 }
 
+// ── Trusted Domains (Link Checker) ─────────────────────────────────────────
+function loadTrustedDomains() {
+  return window._trustedDomains && window._trustedDomains.length
+    ? [...window._trustedDomains] : [];
+}
+function saveTrustedDomains(arr) {
+  window._trustedDomains = arr;
+  sbSet('trusted_domains', { domains: arr }).catch(console.error);
+}
+function isUrlTrusted(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    return loadTrustedDomains().some(d => host === d || host.endsWith('.' + d));
+  } catch(e) { return false; }
+}
+function addTrustedDomain() {
+  const input = document.getElementById("trustedDomainInput");
+  let val = input.value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0];
+  if (!val) return;
+  const domains = loadTrustedDomains();
+  if (!domains.includes(val)) {
+    domains.push(val);
+    saveTrustedDomains(domains);
+    renderDictPanel();
+  }
+  input.value = "";
+}
+function removeTrustedDomain(domain) {
+  saveTrustedDomains(loadTrustedDomains().filter(d => d !== domain));
+  renderDictPanel();
+}
+
 function toggleDictSection(section) {
   const el = document.getElementById("dict" + (section === "custom" ? "Custom" : "Builtin") + "Section");
   if (el) el.style.display = el.style.display === "none" ? "" : "none";
@@ -2040,6 +2278,21 @@ function renderDictPanel() {
   builtinContainer.innerHTML = BUILTIN_IGNORED.slice().sort().map(w =>
     `<span class="flag-tag">${escHtml(w)}</span>`
   ).join("");
+
+  // Trusted domains
+  const tdContainer = document.getElementById("trustedDomainTags");
+  if (tdContainer) {
+    const domains = loadTrustedDomains();
+    if (domains.length === 0) {
+      tdContainer.innerHTML = `<span style="font-size:12px;color:#aaa;font-style:italic;">No trusted domains yet.</span>`;
+    } else {
+      tdContainer.innerHTML = domains.sort().map(d => `
+        <span class="flag-tag" style="background:#e8f8ec;color:#217a3b;border-color:#86efac;font-family:monospace;font-size:12px;">
+          ${escHtml(d)}
+          <span class="flag-tag-remove" onclick="removeTrustedDomain('${escHtml(d)}')" title="Remove">×</span>
+        </span>`).join("");
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2814,6 +3067,7 @@ function appendLinkRow(r) {
       <button class="filter-btn" onclick="filterLink('wip',this)" title="Show only links whose URL contains 'wip' — likely work-in-progress articles that shouldn't be linked to yet">🚧 WIP</button>`;
   }
 
+  if (isUrlTrusted(r.url)) return; // skip trusted domains
   const fixKey = `link|${r.article_url}|${r.url}`;
   if (FIXED_ITEMS.has(fixKey)) return; // skip already-fixed rows
 

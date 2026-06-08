@@ -88,6 +88,16 @@
     function applyTrustedDomainsData(data) {
       window._trustedDomains = (data && data.domains) || [];
       if (typeof renderDictPanel === 'function') renderDictPanel();
+      // If link cache loaded first (auto-load was deferred), trigger it now
+      if (window._linkCache && !window._linkAutoLoaded) {
+        window._linkAutoLoaded = true;
+        setTimeout(() => {
+          if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
+              typeof linkResults !== 'undefined' && linkResults.length === 0 &&
+              typeof currentMode !== 'undefined' && currentMode === 'link')
+            loadCachedLinks();
+        }, 200);
+      }
     }
     sbGet('trusted_domains').then(data => {
       if (data && (data.domains || []).length) {
@@ -314,13 +324,17 @@
       if (label && window._linkCache.ts)
         label.textContent = new Date(window._linkCache.ts).toLocaleDateString();
       if (!window._linkAutoLoaded) {
-        window._linkAutoLoaded = true;
-        setTimeout(() => {
-          if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
-              typeof linkResults !== 'undefined' && linkResults.length === 0 &&
-              typeof currentMode !== 'undefined' && currentMode === 'link')
-            loadCachedLinks();
-        }, 600);
+        if (window._trustedDomains && window._trustedDomains.length > 0) {
+          // Trusted domains already loaded — safe to auto-load now
+          window._linkAutoLoaded = true;
+          setTimeout(() => {
+            if (typeof isLinkRunning !== 'undefined' && !isLinkRunning &&
+                typeof linkResults !== 'undefined' && linkResults.length === 0 &&
+                typeof currentMode !== 'undefined' && currentMode === 'link')
+              loadCachedLinks();
+          }, 200);
+        }
+        // else: trusted domains not ready — applyTrustedDomainsData will trigger auto-load
       }
     }
     sbGet('link_cache').then(applyLinkCache);

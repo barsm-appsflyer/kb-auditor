@@ -368,6 +368,7 @@
     sbGet('discrepancy_cache').then(applyDiscCacheData);
     sbGet('discrepancy_fixed').then(applyDiscFixedData);
     sbGet('discrepancy_intentional').then(applyDiscIntentionalData);
+    sbGet('cross_audience_cache').then(data => { if (data && data.items) { window._crossCache = data; } });
     sb.channel('disc-cache-ch')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.discrepancy_cache' },
         p => applyDiscCacheData(p.new.value)).subscribe();
@@ -719,7 +720,8 @@
   <div class="mode-tab" onclick="setMode('search',this)" title="Full-text search across the AppsFlyer Knowledge Base">🔍 Search</div>
   <div class="mode-tab" onclick="setMode('dict',this)" title="Manage your custom word list — words here are silently skipped during spell checking">📖 Dictionary</div>
   <div class="mode-tab" onclick="setMode('link',this)" title="Scan all articles for broken, redirected, or unverifiable hyperlinks">🔗 Link Checker</div>
-  <div class="mode-tab" onclick="setMode('discrepancy',this)" title="AI-powered scan: contradictory facts, outdated limitations, and platform parity gaps across articles in the same section and audience">⚡ Discrepancies</div>
+  <div class="mode-tab" onclick="setMode('discrepancy',this)" title="AI-powered scan: contradictory facts, outdated limitations, and platform parity gaps within the same audience and section">⚠️ Inconsistencies</div>
+  <div class="mode-tab" onclick="setMode('crossaudit',this)" title="Compare same-topic articles across Marketer vs Partner audiences — flags numeric contradictions, availability conflicts, and factual mismatches">🔀 Cross-Audience</div>
 </div>
 
 <!-- ═══ SPELL CHECK ═══ -->
@@ -1217,6 +1219,25 @@ function setMode(mode, tab) {
     } else {
       renderDiscLog();
       setStatus('Discrepancy tab ready.');
+    }
+  } else if (mode === 'crossaudit') {
+    document.getElementById('summaryBar').style.display   = 'none';
+    document.getElementById('ownerFilterBar').style.display = 'none';
+    document.getElementById('loadMoreBar').style.display  = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('emptyState').style.display   = 'none';
+    // Update cache date label and auto-load if cached
+    if (window._crossCache && window._crossCache.scanned_at) {
+      const lbl = document.getElementById('crossCacheDateLabel');
+      if (lbl) lbl.textContent = new Date(window._crossCache.scanned_at).toLocaleDateString();
+    }
+    if (crossAllResults.length === 0 && window._crossCache && window._crossCache.items && window._crossCache.items.length > 0) {
+      loadCrossAuditCache();
+    } else if (crossAllResults.length > 0) {
+      renderCrossAuditResults();
+      setStatus(`Cross-audience tab ready — ${crossAllResults.length} findings loaded.`);
+    } else {
+      setStatus('Cross-audience tab ready. Click Run Scan to compare Marketer vs Partner articles.');
     }
   } else {
     resetResults();
@@ -3662,6 +3683,429 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
 
 // ═══════════════════════════════════════════════════════════════════
 
+
+// ════════════════════════════════════════════════════════════════════
+// CROSS-AUDIENCE COMPARISON
+// Fetches all Marketer + Partner articles, matches by topic, compares.
+// ════════════════════════════════════════════════════════════════════
+
+const CROSS_CACHE_KEY = 'cross_audience_cache';
+const MARKETER_CAT_ID = '6550444307985';
+const PARTNER_CAT_ID  = '6550456653457';
+const ZD_BASE = 'https://support.appsflyer.com/api/v2/help_center/en-us';
+
+let crossAllResults = [];   // all findings (loaded/computed)
+let crossShown      = [];   // after filters
+let crossReviewed   = new Set();  // IDs reviewed (persisted in localStorage)
+let crossRunning    = false;
+
+// ── Persistence helpers ────────────────────────────────────────────
+
+function loadCrossReviewed() {
+  try { crossReviewed = new Set(JSON.parse(localStorage.getItem('cross_reviewed') || '[]')); }
+  catch(e) { crossReviewed = new Set(); }
+}
+
+function saveCrossReviewed() {
+  localStorage.setItem('cross_reviewed', JSON.stringify([...crossReviewed]));
+}
+
+// ── Cache helpers ──────────────────────────────────────────────────
+
+async function loadCrossAuditCache() {
+  const data = window._crossCache || (await sbGet(CROSS_CACHE_KEY)).catch(() => null);
+  if (!data || !data.items || !data.items.length) {
+    setStatus('No cross-audience scan cached yet. Click Run Scan.');
+    return;
+  }
+  window._crossCache = data;
+  crossAllResults = data.items;
+  loadCrossReviewed();
+  const d = data.scanned_at ? new Date(data.scanned_at).toLocaleDateString() : '?';
+  document.getElementById('crossCacheDateLabel').textContent = d;
+  renderCrossAuditResults();
+  setStatus(`Loaded cross-audience scan from ${d} — ${crossAllResults.length} findings.`);
+}
+
+async function saveCrossAuditCache() {
+  const payload = { scanned_at: new Date().toISOString(), items: crossAllResults };
+  window._crossCache = payload;
+  await sbSet(CROSS_CACHE_KEY, payload).catch(console.error);
+  document.getElementById('crossCacheDateLabel').textContent = new Date().toLocaleDateString();
+}
+
+// ── Zendesk API helpers ────────────────────────────────────────────
+
+async function zdFetchAll(url) {
+  let results = [], nextUrl = url;
+  while (nextUrl) {
+    const resp = await fetch(nextUrl);
+    if (!resp.ok) break;
+    const data = await resp.json();
+    // handle sections, articles, categories
+    const items = data.sections || data.articles || data.categories || [];
+    results.push(...items);
+    nextUrl = data.next_page || null;
+  }
+  return results;
+}
+
+async function fetchCategoryArticles(catId, labelPrefix, progressCb) {
+  const sections = await zdFetchAll(`${ZD_BASE}/categories/${catId}/sections.json?per_page=100`);
+  progressCb(`${labelPrefix}: found ${sections.length} sections`);
+  const articles = [];
+  for (let i = 0; i < sections.length; i++) {
+    const sec = sections[i];
+    progressCb(`${labelPrefix}: fetching section ${i+1}/${sections.length} — ${sec.name}`);
+    const arts = await zdFetchAll(`${ZD_BASE}/sections/${sec.id}/articles.json?per_page=100`);
+    for (const a of arts) {
+      if (a.draft || a.user_segment_id) continue;
+      if (/\[WIP\]|\[Beta\]/i.test(a.title)) continue;
+      articles.push({ id: a.id, title: a.title, url: a.html_url, section_id: sec.id, section_name: sec.name, body: a.body || '' });
+    }
+  }
+  return articles;
+}
+
+// ── Title normalisation & matching ────────────────────────────────
+
+function normaliseTitle(t) {
+  return t
+    .toLowerCase()
+    .replace(/\b(for\s+)?(marketers?|partners?|ad\s+networks?|networks?|advertisers?|publishers?)\b/g, '')
+    .replace(/\b(introduction\s+to|intro\s+to|overview\s+of|guide\s+to|working\s+with|using|how\s+to|what\s+is|understanding|getting\s+started\s+with)\b/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleScore(a, b) {
+  const wa = new Set(normaliseTitle(a).split(' ').filter(w => w.length > 3));
+  const wb = new Set(normaliseTitle(b).split(' ').filter(w => w.length > 3));
+  const inter = [...wa].filter(w => wb.has(w)).length;
+  const union = new Set([...wa, ...wb]).size;
+  return union === 0 ? 0 : inter / union;
+}
+
+// ── Sentence-level fact extraction ────────────────────────────────
+
+const STOP_WORDS = new Set(['the','a','an','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','this','that','these','those','it','its','for','of','in','on','at','to','from','with','by','about','as','into','through','during','before','after','above','below','between','each','both','few','more','most','other','some','such','no','not','only','same','so','than','too','very','can','and','but','or','if','then','when','where','which','who','what','how','all','also','just','you','your','they','their','we','our','use','used','using','can','cannot']);
+
+function stripHtml(html) {
+  return (html || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/\s+/g,' ').trim();
+}
+
+function getSentences(html) {
+  const text = stripHtml(html);
+  // Split on sentence-ending punctuation followed by space+capital or end of string
+  return text.split(/(?<=[.!?])\s+(?=[A-Z])/).map(s => s.trim()).filter(s => s.length > 30);
+}
+
+function sentenceKeywords(sentence) {
+  return sentence.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
+}
+
+function sentenceSimilarity(a, b) {
+  const ka = new Set(sentenceKeywords(a));
+  const kb = new Set(sentenceKeywords(b));
+  if (ka.size === 0 || kb.size === 0) return 0;
+  const inter = [...ka].filter(w => kb.has(w)).length;
+  const union = new Set([...ka, ...kb]).size;
+  return inter / union;
+}
+
+// Extract sentences containing numeric facts
+function extractNumericSentences(html) {
+  const sentences = getSentences(html);
+  const pattern = /\b(\d[\d,]*(?:\.\d+)?)\s*(days?|hours?|months?|weeks?|events?|records?|attributes?|conversions?|installs?|MB|KB|GB|%|USD|\$)\b/gi;
+  const result = [];
+  for (const s of sentences) {
+    let m;
+    pattern.lastIndex = 0;
+    while ((m = pattern.exec(s)) !== null) {
+      const unit = m[2].replace(/s$/i,'').toLowerCase(); // normalize plural
+      result.push({ sentence: s.slice(0,250), value: parseFloat(m[1].replace(/,/g,'')), unit, raw: m[0] });
+    }
+  }
+  return result;
+}
+
+// Extract sentences containing availability language
+function extractAvailabilitySentences(html) {
+  const sentences = getSentences(html);
+  return {
+    notAvail: sentences.filter(s => /\b(not\s+(?:supported|available|applicable|enabled)|unsupported|unavailable|doesn?'?t\s+support|cannot\s+be\s+used|not\s+applicable)\b/i.test(s)),
+    avail:    sentences.filter(s => /\b(is\s+supported|is\s+available|is\s+enabled|are\s+supported|are\s+available)\b/i.test(s))
+  };
+}
+
+// ── Context-aware comparison ───────────────────────────────────────
+
+function compareArticlePair(mArt, pArt) {
+  const issues = [];
+  const pairId = `${mArt.id}-${pArt.id}`;
+  const seen   = new Set(); // dedup by (unit, mVal, pVal)
+
+  const mNumSents = extractNumericSentences(mArt.body);
+  const pNumSents = extractNumericSentences(pArt.body);
+  const mAvail    = extractAvailabilitySentences(mArt.body);
+  const pAvail    = extractAvailabilitySentences(pArt.body);
+
+  const SIM_THRESHOLD = 0.25; // min topic overlap to treat sentences as same concept
+
+  // ── 1. Numeric contradictions (sentence-matched) ──────────────────
+  for (const mF of mNumSents) {
+    // Only compare Partner sentences with the same unit
+    const candidates = pNumSents.filter(p => p.unit === mF.unit && p.value !== mF.value);
+    if (!candidates.length) continue;
+
+    // Find the Partner sentence most topically similar to this Marketer sentence
+    let best = null, bestSim = 0;
+    for (const pF of candidates) {
+      const sim = sentenceSimilarity(mF.sentence, pF.sentence);
+      if (sim > bestSim) { bestSim = sim; best = pF; }
+    }
+
+    if (best && bestSim >= SIM_THRESHOLD) {
+      const dedup = `${mF.unit}|${Math.min(mF.value,best.value)}|${Math.max(mF.value,best.value)}`;
+      if (seen.has(dedup)) continue;
+      seen.add(dedup);
+
+      // Severity: high if values differ by 2× or more
+      const ratio = Math.max(mF.value, best.value) / Math.min(mF.value, best.value);
+      issues.push({
+        id: `${pairId}-num-${dedup.replace(/\|/g,'-')}`,
+        type: 'numeric_diff',
+        severity: ratio >= 2 ? 'high' : 'medium',
+        finding: `${mF.unit.charAt(0).toUpperCase()+mF.unit.slice(1)} value differs (${mF.value} vs ${best.value})`,
+        context_m: mF.sentence,
+        context_p: best.sentence
+      });
+    }
+  }
+
+  // ── 2. Availability contradictions (sentence-matched) ─────────────
+  for (const mS of mAvail.notAvail) {
+    // Find a Partner sentence that's topically similar but doesn't say "not available"
+    const simAvailSents = [...pAvail.avail, ...getSentences(pArt.body)]
+      .filter(s => !/\b(not\s+(?:supported|available)|unsupported|unavailable)\b/i.test(s));
+
+    let best = null, bestSim = 0;
+    for (const pS of simAvailSents) {
+      const sim = sentenceSimilarity(mS, pS);
+      if (sim > bestSim) { bestSim = sim; best = pS; }
+    }
+    if (best && bestSim >= 0.3) {
+      issues.push({
+        id: `${pairId}-avail-m-${issues.length}`,
+        type: 'availability_conflict',
+        severity: 'high',
+        finding: `Availability may differ — Marketer says not supported/available, Partner may support it`,
+        context_m: mS.slice(0,250),
+        context_p: best.slice(0,250)
+      });
+      break; // one per article pair is enough for this direction
+    }
+  }
+
+  for (const pS of pAvail.notAvail) {
+    const simAvailSents = [...mAvail.avail, ...getSentences(mArt.body)]
+      .filter(s => !/\b(not\s+(?:supported|available)|unsupported|unavailable)\b/i.test(s));
+    let best = null, bestSim = 0;
+    for (const mS of simAvailSents) {
+      const sim = sentenceSimilarity(pS, mS);
+      if (sim > bestSim) { bestSim = sim; best = mS; }
+    }
+    if (best && bestSim >= 0.3) {
+      issues.push({
+        id: `${pairId}-avail-p-${issues.length}`,
+        type: 'availability_conflict',
+        severity: 'high',
+        finding: `Availability may differ — Partner says not supported/available, Marketer may support it`,
+        context_m: best.slice(0,250),
+        context_p: pS.slice(0,250)
+      });
+      break;
+    }
+  }
+
+  return issues.map(iss => ({
+    ...iss,
+    marketer_id: mArt.id,
+    marketer_title: mArt.title,
+    marketer_url: mArt.url,
+    marketer_section: mArt.section_name,
+    partner_id: pArt.id,
+    partner_title: pArt.title,
+    partner_url: pArt.url,
+    partner_section: pArt.section_name,
+    title_score: titleScore(mArt.title, pArt.title)
+  }));
+}
+
+// ── Main scan function ─────────────────────────────────────────────
+
+async function runCrossAuditScan() {
+  if (crossRunning) return;
+  crossRunning = true;
+  const btn = document.getElementById('crossRunBtn');
+  if (btn) { btn.textContent = '⏳ Scanning…'; btn.disabled = true; }
+
+  const progress = (msg) => {
+    const el = document.getElementById('crossProgressLabel');
+    if (el) el.textContent = msg;
+    setStatus(msg);
+  };
+
+  try {
+    progress('Fetching Marketer articles…');
+    const marketerArts = await fetchCategoryArticles(MARKETER_CAT_ID, 'Marketers', progress);
+    progress(`Marketers: ${marketerArts.length} articles. Fetching Partner articles…`);
+    const partnerArts  = await fetchCategoryArticles(PARTNER_CAT_ID, 'Partners', progress);
+    progress(`Partners: ${partnerArts.length} articles. Matching pairs…`);
+
+    // Match articles — use title similarity threshold 0.35
+    const THRESHOLD = 0.35;
+    const pairs = [];
+    const usedPartner = new Set();
+    for (const mArt of marketerArts) {
+      let best = null, bestScore = 0;
+      for (const pArt of partnerArts) {
+        if (usedPartner.has(pArt.id)) continue;
+        const score = titleScore(mArt.title, pArt.title);
+        if (score > bestScore) { bestScore = score; best = pArt; }
+      }
+      if (best && bestScore >= THRESHOLD) {
+        pairs.push({ m: mArt, p: best, score: bestScore });
+        usedPartner.add(best.id);
+      }
+    }
+
+    progress(`Matched ${pairs.length} article pairs. Comparing content…`);
+    crossAllResults = [];
+
+    for (let i = 0; i < pairs.length; i++) {
+      const { m, p } = pairs[i];
+      if (i % 10 === 0) progress(`Comparing pair ${i+1}/${pairs.length}…`);
+
+      // Fetch full body if not already in article object
+      let mBody = m.body, pBody = p.body;
+      if (!mBody) {
+        try { const r = await fetch(`${ZD_BASE}/articles/${m.id}.json`); const j = await r.json(); mBody = j.article.body || ''; } catch(e) {}
+      }
+      if (!pBody) {
+        try { const r = await fetch(`${ZD_BASE}/articles/${p.id}.json`); const j = await r.json(); pBody = j.article.body || ''; } catch(e) {}
+      }
+      m.body = mBody; p.body = pBody;
+
+      const issues = compareArticlePair(m, p);
+      crossAllResults.push(...issues);
+    }
+
+    loadCrossReviewed();
+    await saveCrossAuditCache();
+    renderCrossAuditResults();
+    progress('');
+    setStatus(`Cross-audience scan complete — ${pairs.length} matched pairs, ${crossAllResults.length} findings.`);
+
+  } catch(e) {
+    setStatus('Cross-audience scan failed: ' + e.message);
+    console.error(e);
+  } finally {
+    crossRunning = false;
+    if (btn) { btn.textContent = '▶ Run Scan'; btn.disabled = false; }
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────
+
+function renderCrossAuditResults() {
+  const filterType = document.getElementById('crossFilterType')?.value || 'all';
+  const filterSev  = document.getElementById('crossFilterSev')?.value  || 'all';
+  const hideRev    = document.getElementById('crossHideReviewed')?.checked !== false;
+
+  crossShown = crossAllResults.filter(r => {
+    if (filterType !== 'all' && r.type !== filterType) return false;
+    if (filterSev  !== 'all' && r.severity !== filterSev) return false;
+    if (hideRev && crossReviewed.has(r.id)) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('crossResultsBody');
+  if (!tbody) return;
+
+  if (crossShown.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="disc-empty-state"><span class="disc-empty-icon">🔀</span><div>${crossAllResults.length ? 'No findings match the current filters.' : 'No scan loaded yet — click <b>Load Last Scan</b> or <b>Run Scan</b>.'}</div></div></td></tr>`;
+    const bar = document.getElementById('crossSummaryBar');
+    if (bar) bar.textContent = crossAllResults.length ? `${crossAllResults.length} total findings — all filtered out or reviewed.` : '';
+    return;
+  }
+
+  tbody.innerHTML = '';
+  for (const r of crossShown) {
+    const sevColor = r.severity === 'high' ? '#b91c1c' : r.severity === 'medium' ? '#92400e' : '#555';
+    const typeLabel = { numeric_diff: '🔢 Numeric diff', availability_conflict: '⚠️ Availability', limit_diff: '📏 Limit mismatch' }[r.type] || r.type;
+    const reviewed  = crossReviewed.has(r.id);
+    const tr = document.createElement('tr');
+    if (reviewed) tr.style.opacity = '0.5';
+    tr.id = 'cross-row-' + r.id;
+    tr.innerHTML = `
+      <td><a href="${escapeHtml(r.marketer_url)}" target="_blank" style="color:#0071e3;text-decoration:none;">${escapeHtml(r.marketer_title)}</a><br><small style="color:#999">${escapeHtml(r.marketer_section||'')}</small></td>
+      <td><a href="${escapeHtml(r.partner_url)}" target="_blank" style="color:#0071e3;text-decoration:none;">${escapeHtml(r.partner_title)}</a><br><small style="color:#999">${escapeHtml(r.partner_section||'')}</small></td>
+      <td><span style="color:${sevColor};font-weight:600">${typeLabel}</span><br><small style="color:#aaa">${r.severity}</small></td>
+      <td style="font-size:12px;">
+        <strong>${escapeHtml(r.finding)}</strong>
+        ${r.context_m ? `<div style="margin-top:4px;padding:4px 6px;background:#f0f9ff;border-left:3px solid #0071e3;border-radius:3px;font-size:11px;color:#333;"><b>Marketer:</b> "${escapeHtml(r.context_m)}"</div>` : ''}
+        ${r.context_p ? `<div style="margin-top:3px;padding:4px 6px;background:#fff7ed;border-left:3px solid #f59e0b;border-radius:3px;font-size:11px;color:#333;"><b>Partner:</b> "${escapeHtml(r.context_p)}"</div>` : ''}
+      </td>
+      <td style="white-space:nowrap;">
+        <button class="btn-fixed" onclick="markCrossReviewed('${r.id}')" title="Mark as reviewed — hides from list">✓ Reviewed</button>
+        <a href="${escapeHtml(r.marketer_url)}" target="_blank" class="btn-fixed" style="margin-top:4px;display:inline-block;text-align:center;">Open Marketer ↗</a>
+        <a href="${escapeHtml(r.partner_url)}" target="_blank" class="btn-fixed" style="margin-top:4px;display:inline-block;text-align:center;">Open Partner ↗</a>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+
+  const bar = document.getElementById('crossSummaryBar');
+  if (bar) {
+    const high = crossShown.filter(r => r.severity === 'high').length;
+    const med  = crossShown.filter(r => r.severity === 'medium').length;
+    bar.innerHTML = `Showing <b>${crossShown.length}</b> finding${crossShown.length !== 1 ? 's' : ''} &nbsp;·&nbsp; <span style="color:#b91c1c;font-weight:600">${high} high</span> &nbsp;·&nbsp; <span style="color:#92400e;font-weight:600">${med} medium</span>`;
+  }
+}
+
+function markCrossReviewed(id) {
+  crossReviewed.add(id);
+  saveCrossReviewed();
+  const row = document.getElementById('cross-row-' + id);
+  if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+  crossShown = crossShown.filter(r => r.id !== id);
+  const bar = document.getElementById('crossSummaryBar');
+  if (bar && crossShown.length === 0) { renderCrossAuditResults(); }
+}
+
+function exportCrossAuditCSV() {
+  if (!crossShown.length) { alert('No results to export.'); return; }
+  const headers = ['Type','Severity','Finding','Marketer Article','Marketer URL','Marketer Section','Partner Article','Partner URL','Partner Section','Title Match Score'];
+  const rows = crossShown.map(r => [
+    r.type, r.severity, r.finding,
+    r.marketer_title, r.marketer_url, r.marketer_section||'',
+    r.partner_title, r.partner_url, r.partner_section||'',
+    (r.title_score||0).toFixed(2)
+  ].map(v => `"${(v||'').replace(/"/g,'""')}"`).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'cross-audience-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+// Auto-load cache when switching to this tab (wired via setMode)
+// ═══════════════════════════════════════════════════════════════════
+
 </script>
 
 
@@ -3669,8 +4113,8 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
 <div class="mode-panel" id="panel-discrepancy">
   <div class="panel-body">
     <div class="scan-intro">
-      <h2>⚡ Discrepancy Scanner</h2>
-      <p>AI-powered scan that detects contradictions, outdated limitations, and platform parity gaps across articles <strong>within the same section and audience</strong>. Cross-audience differences (Marketers vs. Partners vs. DevHub) are always intentional and are never flagged.</p>
+      <h2>⚠️ Inconsistency Scanner</h2>
+      <p>AI-powered scan that detects contradictions, outdated limitations, and platform parity gaps across articles <strong>within the same section and audience</strong>. Use the <strong>🔀 Cross-Audience</strong> tab to compare Marketer vs Partner articles about the same product.</p>
       <p style="margin-top:8px;font-size:12px;color:#999;">Scans run server-side via Make.com using Anthropic's API — no personal tokens consumed. Results are shared across the team via Supabase.</p>
     </div>
 
@@ -3769,6 +4213,72 @@ async function pushFileToGitHub(token, filename, content, commitMessage) {
   </div>
 </div>
 <!-- ══ /DISCREPANCY PANEL ═════════════════════════════════════════════════ -->
+
+
+<!-- ══ CROSS-AUDIENCE PANEL ══════════════════════════════════════════════ -->
+<div class="mode-panel" id="panel-crossaudit">
+  <div class="panel-body">
+    <div class="scan-intro">
+      <h2>🔀 Cross-Audience Comparison</h2>
+      <p>Fetches all published articles for <strong>Marketers</strong> and <strong>Partners</strong>, matches them by topic, then compares content to surface numeric contradictions, availability conflicts, and factual mismatches.</p>
+      <p style="margin-top:6px;font-size:12px;color:#999;">Runs entirely in the browser using the public Zendesk API. No credentials required. Fetching ~300+ articles takes 1–3 minutes.</p>
+    </div>
+
+    <div class="scan-controls" style="flex-wrap:wrap;gap:8px;">
+      <button class="btn btn-primary" id="crossRunBtn" onclick="runCrossAuditScan()">▶ Run Scan</button>
+      <button class="btn btn-light btn-sm" id="crossLoadCacheBtn" onclick="loadCrossAuditCache()">📂 Load Last Scan (<span id="crossCacheDateLabel">—</span>)</button>
+      <button class="btn btn-light btn-sm" onclick="exportCrossAuditCSV()">⬇ Export CSV</button>
+      <span id="crossProgressLabel" style="font-size:12px;color:#888;align-self:center;"></span>
+    </div>
+
+    <div class="disc-filter-bar" style="margin-top:12px;">
+      <label>Filter
+        <select id="crossFilterType" onchange="renderCrossAuditResults()">
+          <option value="all">All types</option>
+          <option value="numeric_diff">Numeric difference</option>
+          <option value="availability_conflict">Availability conflict</option>
+          <option value="limit_diff">Limit mismatch</option>
+        </select>
+      </label>
+      <label>Severity
+        <select id="crossFilterSev" onchange="renderCrossAuditResults()">
+          <option value="all">All severities</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" id="crossHideReviewed" onchange="renderCrossAuditResults()" checked>
+        Hide reviewed
+      </label>
+    </div>
+
+    <div class="disc-summary-bar" id="crossSummaryBar"></div>
+
+    <table class="disc-table" style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th style="width:20%">Marketer Article</th>
+          <th style="width:20%">Partner Article</th>
+          <th style="width:12%">Type / Severity</th>
+          <th style="width:28%">Finding</th>
+          <th style="width:20%">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="crossResultsBody">
+        <tr><td colspan="5">
+          <div class="disc-empty-state">
+            <span class="disc-empty-icon">🔀</span>
+            <div>No scan loaded yet — click <b>Load Last Scan</b> or <b>Run Scan</b> to compare Marketer vs Partner articles.</div>
+          </div>
+        </td></tr>
+      </tbody>
+    </table>
+
+  </div>
+</div>
+<!-- ══ /CROSS-AUDIENCE PANEL ══════════════════════════════════════════════ -->
 
 
 </body>

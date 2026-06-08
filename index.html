@@ -2912,6 +2912,7 @@ async function runLinkScan() {
 
       await Promise.all(batch.map(async (url) => {
         if (linkStopFlag) return;
+        if (isUrlTrusted(url)) { checked++; linkCheckedCount = checked; return; } // skip trusted domains
         const result = await checkLink(url);
         checked++;
         linkCheckedCount = checked;
@@ -3196,7 +3197,7 @@ function loadCachedLinks() {
       return raw ? JSON.parse(raw) : null;
     })();
     if (!cache) return;
-    linkResults      = cache.results || [];
+    linkResults      = (cache.results || []).filter(r => !isUrlTrusted(r.url));
     linkCheckedCount = cache.checked || linkResults.length;
     unverifShown = true;
     resetResults();

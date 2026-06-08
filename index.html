@@ -3559,16 +3559,151 @@ function toggleDiscLog() {
 
 async function triggerFreshScan() {
   const btn = document.getElementById('discRunBtn');
-  if (btn) { btn.textContent = '⏳ Triggering…'; btn.disabled = true; }
+  if (btn) { btn.textContent = '⏳ Scanning…'; btn.disabled = true; }
+
+  const findings = [];
+  let findingId = 0;
+
   try {
-    const resp = await fetch(MAKE_DISC_WEBHOOK, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ triggered_at: new Date().toISOString() }) });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    setStatus('✅ Scan triggered — Make.com scenario is running. Results will appear in Supabase when complete (typically 10–15 min). Reload the tab to see them.');
-    if (btn) { btn.textContent = '✅ Triggered!'; setTimeout(() => { btn.textContent = '▶ Run Fresh Scan'; btn.disabled = false; }, 4000); }
+    setStatus('Fetching sections…');
+    const AUDIENCE_IDS   = new Set(['6550444307985','6550456653457','4709485021969']);
+    const AUDIENCE_NAMES = { '6550444307985':'Marketers','6550456653457':'Partners','4709485021969':'Internal' };
+
+    const sectResp = await fetch('https://support.appsflyer.com/api/v2/help_center/en-us/sections.json?per_page=100');
+    const sectData = await sectResp.json();
+    const sections = (sectData.sections || []).filter(s => AUDIENCE_IDS.has(String(s.category_id)));
+
+    setStatus(`Found ${sections.length} sections. Scanning…`);
+
+    let scanned = 0;
+    for (const section of sections) {
+      scanned++;
+      if (scanned % 10 === 0) setStatus(`Scanning ${scanned}/${sections.length} sections…`);
+
+      const artResp = await fetch(
+        `https://support.appsflyer.com/api/v2/help_center/en-us/sections/${section.id}/articles.json?per_page=100`
+      );
+      const artData = await artResp.json();
+      const articles = (artData.articles || []).filter(a =>
+        !a.draft && !a.user_segment_id &&
+        !a.title.includes('[WIP]') && !a.title.includes('[Beta]')
+      );
+      if (articles.length < 2) continue;
+
+      const audience = AUDIENCE_NAMES[String(section.category_id)] || String(section.category_id);
+      const sectionFindings = runDiscRules(articles, section.name, audience);
+      sectionFindings.forEach(f => { f.id = String(++findingId); findings.push(f); });
+    }
+
+    const cacheData = { ts: new Date().toISOString(), items: findings };
+    await sbSet('discrepancy_cache', cacheData);
+    window._discCache = cacheData;
+
+    const label = document.getElementById('discCacheDateLabel');
+    if (label) label.textContent = new Date(cacheData.ts).toLocaleDateString();
+    const loadBtn = document.getElementById('loadDiscCacheBtn');
+    if (loadBtn) loadBtn.style.display = 'inline-block';
+
+    loadDiscCache();
+    setStatus(`✅ Scan complete — ${findings.length} potential issue${findings.length !== 1 ? 's' : ''} in ${sections.length} sections.`);
+
   } catch(e) {
-    setStatus('Could not trigger scan: ' + e.message + ' — check the webhook URL.');
+    setStatus('Scan error: ' + e.message);
+    console.error(e);
+  } finally {
     if (btn) { btn.textContent = '▶ Run Fresh Scan'; btn.disabled = false; }
   }
+}
+
+function runDiscRules(articles, sectionName, audience) {
+  const findings = [];
+  const arts = articles.map(a => ({
+    id: a.id, title: a.title, body: a.body || '',
+    url: `https://support.appsflyer.com/hc/en-us/articles/${a.id}`
+  }));
+  const seen = new Set();
+  const SIM_THRESHOLD = 0.25;
+
+  for (let i = 0; i < arts.length; i++) {
+    // ── Rule E: intra-article contradiction ───────────────────────────────
+    const artE = arts[i];
+    const availE = extractAvailabilitySentences(artE.body);
+    for (const notS of availE.notAvail) {
+      for (const yesS of availE.avail) {
+        if (sentenceSimilarity(notS, yesS) < 0.35) continue;
+        const key = `E|${artE.url}|${notS.slice(0,40)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        findings.push({
+          type:'E', severity:'medium', section:sectionName, audience,
+          article_title: artE.title, article_url: artE.url,
+          wrong_text: notS.slice(0,200),
+          suggested_fix: 'Clarify — article appears to state opposite things about the same feature',
+          why_flagged: 'Article contains both a "not supported/available" and a "is supported/available" claim on the same topic',
+          conflicting_url: artE.url, conflicting_title: artE.title
+        });
+        break;
+      }
+    }
+
+    for (let j = i + 1; j < arts.length; j++) {
+      const a = arts[i], b = arts[j];
+
+      // ── Rule D: conflicting numeric values ────────────────────────────
+      const aFacts = extractNumericSentences(a.body);
+      const bFacts = extractNumericSentences(b.body);
+      for (const af of aFacts) {
+        const candidates = bFacts.filter(bf => bf.unit === af.unit && bf.value !== af.value);
+        if (!candidates.length) continue;
+        let best = null, bestSim = 0;
+        for (const bf of candidates) {
+          const s = sentenceSimilarity(af.sentence, bf.sentence);
+          if (s > bestSim) { bestSim = s; best = bf; }
+        }
+        if (!best || bestSim < SIM_THRESHOLD) continue;
+        const ratio = Math.max(af.value,best.value) / Math.min(af.value,best.value);
+        if (ratio < 1.3) continue;
+        const key = `D|${sectionName}|${af.unit}|${Math.min(af.value,best.value)}-${Math.max(af.value,best.value)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        findings.push({
+          type:'D', severity: ratio >= 2 ? 'high' : 'medium', section:sectionName, audience,
+          article_title: a.title, article_url: a.url,
+          wrong_text: af.sentence.slice(0,200),
+          suggested_fix: `Verify: "${af.value} ${af.unit}" vs "${best.value} ${af.unit}" — align to the correct value`,
+          why_flagged: `Conflicting ${af.unit} values (${af.value} vs ${best.value}) in similar context`,
+          conflicting_url: b.url, conflicting_title: b.title
+        });
+      }
+
+      // ── Rule A: cross-article availability conflict ───────────────────
+      const aAvail = extractAvailabilitySentences(a.body);
+      const bAvail = extractAvailabilitySentences(b.body);
+
+      const checkConflict = (notSents, yesSents, notArt, yesArt) => {
+        for (const ns of notSents) {
+          for (const ys of yesSents) {
+            if (sentenceSimilarity(ns, ys) < 0.30) continue;
+            const key = `A|${sectionName}|${ns.slice(0,45)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            findings.push({
+              type:'A', severity:'high', section:sectionName, audience,
+              article_title: notArt.title, article_url: notArt.url,
+              wrong_text: ns.slice(0,200),
+              suggested_fix: 'Verify feature availability — one article says not supported, another implies it is',
+              why_flagged: `"${notArt.title}" says feature is not available, but "${yesArt.title}" says it is`,
+              conflicting_url: yesArt.url, conflicting_title: yesArt.title
+            });
+            return;
+          }
+        }
+      };
+      checkConflict(aAvail.notAvail, bAvail.avail, a, b);
+      checkConflict(bAvail.notAvail, aAvail.avail, b, a);
+    }
+  }
+  return findings;
 }
 
 function exportDiscCSV() {
@@ -3967,20 +4102,69 @@ async function runCrossAuditScan() {
     const partnerArts  = await fetchCategoryArticles(PARTNER_CAT_ID, 'Partners', progress);
     progress(`Partners: ${partnerArts.length} articles. Matching pairs…`);
 
-    // Match articles — use title similarity threshold 0.35
-    const THRESHOLD = 0.35;
+    // ── Multi-strategy article matching ──────────────────────────────────
+    const TITLE_THRESHOLD = 0.20;       // global title similarity floor (was 0.35)
+    const SECTION_THRESHOLD = 0.40;     // section-name similarity to treat sections as paired
+    const SECTION_TITLE_MIN  = 0.10;    // title sim floor within already-matched sections
+
+    // Extract unique sections from article lists
+    const mSecs = [...new Map(marketerArts.map(a => [a.section_id, {id:a.section_id, name:a.section_name}])).values()];
+    const pSecs = [...new Map(partnerArts.map( a => [a.section_id, {id:a.section_id, name:a.section_name}])).values()];
+
+    // Match sections by name similarity
+    const secMap = {};   // mSecId → pSecId
+    let matchedSecCount = 0;
+    for (const ms of mSecs) {
+      let best = null, bestScore = 0;
+      for (const ps of pSecs) {
+        const score = titleScore(ms.name, ps.name);
+        if (score > bestScore) { bestScore = score; best = ps; }
+      }
+      if (best && bestScore >= SECTION_THRESHOLD) {
+        secMap[ms.id] = best.id;
+        matchedSecCount++;
+      }
+    }
+    progress(`Matched ${matchedSecCount} section pairs out of ${mSecs.length}M / ${pSecs.length}P. Pairing articles…`);
+
+    // Group articles by section for fast lookup
+    const mBySection = {}, pBySection = {};
+    for (const a of marketerArts) { (mBySection[a.section_id] = mBySection[a.section_id] || []).push(a); }
+    for (const a of partnerArts)  { (pBySection[a.section_id] = pBySection[a.section_id] || []).push(a); }
+
     const pairs = [];
-    const usedPartner = new Set();
+    const pairKeys = new Set();   // "mId-pId" dedup
+
+    // Pass 1 — within matched sections (low title threshold)
+    for (const [mSecId, pSecId] of Object.entries(secMap)) {
+      const mPool = mBySection[mSecId] || [];
+      const pPool = pBySection[pSecId] || [];
+      if (!pPool.length) continue;
+      for (const mArt of mPool) {
+        let best = null, bestScore = -1;
+        for (const pArt of pPool) {
+          const score = titleScore(mArt.title, pArt.title);
+          if (score > bestScore) { bestScore = score; best = pArt; }
+        }
+        if (best && bestScore >= SECTION_TITLE_MIN) {
+          const key = `${mArt.id}-${best.id}`;
+          if (!pairKeys.has(key)) { pairs.push({m:mArt, p:best, score:bestScore, method:'section'}); pairKeys.add(key); }
+        }
+      }
+    }
+
+    // Pass 2 — global title matching for articles not yet paired
+    const pairedMIds = new Set(pairs.map(p => p.m.id));
     for (const mArt of marketerArts) {
+      if (pairedMIds.has(mArt.id)) continue;
       let best = null, bestScore = 0;
       for (const pArt of partnerArts) {
-        if (usedPartner.has(pArt.id)) continue;
         const score = titleScore(mArt.title, pArt.title);
         if (score > bestScore) { bestScore = score; best = pArt; }
       }
-      if (best && bestScore >= THRESHOLD) {
-        pairs.push({ m: mArt, p: best, score: bestScore });
-        usedPartner.add(best.id);
+      if (best && bestScore >= TITLE_THRESHOLD) {
+        const key = `${mArt.id}-${best.id}`;
+        if (!pairKeys.has(key)) { pairs.push({m:mArt, p:best, score:bestScore, method:'title'}); pairKeys.add(key); }
       }
     }
 

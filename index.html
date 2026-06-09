@@ -2846,7 +2846,7 @@ async function checkLink(url) {
     }
   }
 
-  // ── Path B: direct request — works for internal/CORS-enabled URLs ─────────
+  // ── Path B: HEAD request — fast, works for most servers ─────────────────
   const ctrl1 = new AbortController();
   const t1 = setTimeout(() => ctrl1.abort(), LINK_TIMEOUT_MS);
   try {
@@ -2854,18 +2854,37 @@ async function checkLink(url) {
     clearTimeout(t1);
     if (resp.redirected) return { status: "redirect",  code: "3xx", finalUrl: resp.url };
     if (resp.ok)         return { status: "ok",        code: resp.status };
-    return                      { status: "broken",    code: resp.status };
+    // HEAD returned a 4xx/5xx — confirm with GET before declaring broken
+    // (some servers return 405 to HEAD but serve the page fine via GET)
   } catch(e1) {
     clearTimeout(t1);
     if (e1.name === "AbortError") return { status: "timeout", code: null };
-    // CORS block or network failure — probe with no-cors to tell them apart
+    // HEAD threw (CORS block or server refused HEAD) — fall through to GET
   }
 
-  // ── Path C: no-cors probe — is the server actually up? ───────────────────
+  // ── Path B2: GET fallback — confirms HEAD failures and 4xx/5xx results ───
+  // Many real servers (Google, EU Commission, SourceForge…) refuse HEAD but
+  // serve GET normally. Only mark broken if GET also confirms the failure.
+  const ctrl3 = new AbortController();
+  const t3 = setTimeout(() => ctrl3.abort(), LINK_TIMEOUT_MS);
+  try {
+    const resp2 = await fetch(url, { method: "GET", signal: ctrl3.signal, redirect: "follow" });
+    clearTimeout(t3);
+    try { resp2.body && await resp2.body.cancel(); } catch(_) {}
+    if (resp2.redirected) return { status: "redirect", code: "3xx", finalUrl: resp2.url };
+    if (resp2.ok)         return { status: "ok",       code: resp2.status };
+    return                       { status: "broken",   code: resp2.status };
+  } catch(e3) {
+    clearTimeout(t3);
+    if (e3.name === "AbortError") return { status: "timeout", code: null };
+    // GET also threw — now probe with no-cors to distinguish CORS vs truly down
+  }
+
+  // ── Path C: no-cors probe — server up but blocking CORS entirely? ────────
   const ctrl2 = new AbortController();
   const t2 = setTimeout(() => ctrl2.abort(), 8000);
   try {
-    await fetch(url, { method: "HEAD", mode: "no-cors", signal: ctrl2.signal });
+    await fetch(url, { method: "GET", mode: "no-cors", signal: ctrl2.signal });
     clearTimeout(t2);
     return { status: "unverifiable", code: null };
   } catch(e2) {

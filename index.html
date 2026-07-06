@@ -1016,7 +1016,8 @@ async function runFullScan() {
         const params = new URLSearchParams({
           language: "en-US",
           text: textToCheck,
-          enabledCategories: "TYPOS",
+          enabledCategories: "TYPOS,REDUNDANCY,CONFUSED_WORDS,COMPOUNDING,TYPOGRAPHY",
+          enabledRules: "ENGLISH_WORD_REPEAT_RULE", // MISC category rule — scoped individually to avoid pulling in the rest of MISC
           enabledOnly: "true"
         });
 
@@ -1033,13 +1034,21 @@ async function runFullScan() {
             match.context.offset,
             match.context.offset + match.context.length
           );
+          // Which rule/category fired — TYPOS-specific heuristics below don't apply to the
+          // newer categories (REDUNDANCY, CONFUSED_WORDS, COMPOUNDING, PUNCTUATION, word-repeat),
+          // since those legitimately match multi-word phrases or short tokens.
+          const ruleCategoryId = (match.rule && match.rule.category && match.rule.category.id) || "";
+          const ruleId = (match.rule && match.rule.id) || "";
+          const isTyposMatch = ruleCategoryId === "TYPOS";
+
           // Skip if in our combined ignore list
           if (IGNORED_WORDS.has(word.toLowerCase())) continue;
-          // Skip very short tokens
-          if (word.length < 3) continue;
+          // Skip very short tokens — TYPOS only (TYPOGRAPHY/word-repeat can legitimately be short)
+          if (isTyposMatch && word.length < 3) continue;
           // Skip multi-word phrases — these are almost always <wbr> tag artifacts
-          // (e.g. "y ou" from y<wbr>ou rendered in source) that slip through as phrase matches
-          if (word.includes(" ")) continue;
+          // (e.g. "y ou" from y<wbr>ou rendered in source) that slip through as phrase matches.
+          // Only applies to TYPOS; REDUNDANCY and word-repeat matches are legitimately multi-word.
+          if (isTyposMatch && word.includes(" ")) continue;
           // Skip all-uppercase tokens (acronyms like API, SDK, SRN)
           if (/^[A-Z]{2,}$/.test(word)) continue;
           // Skip tokens with digits, underscores, or braces (code/IDs)
@@ -1068,16 +1077,22 @@ async function runFullScan() {
           // Skip tokens where LanguageTool's only suggestion is the same word capitalised
           // — these are almost always legitimate acronyms or proper nouns (e.g. "ietf" → "IETF")
           // that simply aren't in LanguageTool's dictionary but are well-known tech terms.
+          // TYPOS-only: non-typo categories (e.g. TYPOGRAPHY) can have a valid issue with no
+          // suggested replacement at all (e.g. "remove this comma"), so don't require one there.
           const correction = match.replacements.length > 0 ? match.replacements[0].value : "";
-          if (!correction) continue;
-          if (correction.toLowerCase() === word.toLowerCase()) continue;
-          // If the only suggested correction is just Title-Casing the word, skip it —
-          // these are almost always product names / acronyms that belong in the dictionary.
-          if (correction === word.charAt(0).toUpperCase() + word.slice(1)) continue;
+          if (isTyposMatch) {
+            if (!correction) continue;
+            if (correction.toLowerCase() === word.toLowerCase()) continue;
+            // If the only suggested correction is just Title-Casing the word, skip it —
+            // these are almost always product names / acronyms that belong in the dictionary.
+            if (correction === word.charAt(0).toUpperCase() + word.slice(1)) continue;
+          }
 
           const mistake = {
             word,
-            correction,
+            correction: correction || (match.message || match.shortMessage || ""),
+            ruleId,
+            ruleCategory: ruleCategoryId,
             context: match.context.text,
             article_title: article.title || "",
             article_url: article.html_url || ""
@@ -1467,11 +1482,12 @@ function setSpellHeaders() {
 
 function appendSpellRow(m) {
   const word = m.word || "";
-  // Filter cached results that would have been caught by newer scan filters:
+  const isTyposMatch = (m.ruleCategory || "TYPOS") === "TYPOS"; // older cached rows have no ruleCategory — treat as TYPOS
+  // Filter cached results that would have been caught by newer scan filters (TYPOS only):
   // — multi-word phrases are <wbr> artifacts (e.g. "y ou" from y<wbr>ou)
-  if (word.includes(" ")) return;
+  if (isTyposMatch && word.includes(" ")) return;
   // — very short fragments (1-2 chars)
-  if (word.length < 3) return;
+  if (isTyposMatch && word.length < 3) return;
   const contextHtml = highlightWord(m.context || "", word);
   const alreadyIgnored = IGNORED_WORDS.has(word.toLowerCase());
   const fixKey = `spell|${m.article_url}|${word.toLowerCase()}`;

@@ -1271,18 +1271,18 @@ function buildAuthorIdMap(articles) {
 }
 
 function getArticleOwner(title, url) {
-  // 1. Manual override (user-assigned, shared across all users)
+  // 1. Manual override (user-assigned, shared across all users) — always wins
   if (url && window._ownerOverrides && window._ownerOverrides[url]) {
     return window._ownerOverrides[url];
   }
-  // 2. Keyword match
-  const kw = getArticleOwnerByKeyword(title, url);
-  if (kw !== "—") return kw;
-  // 3. Fallback: author ID auto-discovered from keyword-matched articles
+  // 2. Real article author/editor, if it resolves to a current team member
   const editorId = window._articleEditorIdMap && window._articleEditorIdMap[url];
   if (editorId && window._authorIdToOwner && window._authorIdToOwner[editorId]) {
     return window._authorIdToOwner[editorId];
   }
+  // 3. Keyword match against the KB ownership map
+  const kw = getArticleOwnerByKeyword(title, url);
+  if (kw !== "—") return kw;
   return "—";
 }
 
@@ -1306,9 +1306,13 @@ function getArticleOwnerByKeyword(title, url) {
     "skan ssot","skan vs classic","google ads skan","meta ads skan",
     // User/App management
     "user management","app transfer","adding app","managing appsflyer token",
-    "master api",
+    "master api","appsflyer token",
     // Cross-platform re-engagement / Advanced security
-    "advanced security module","cross-platform re-engagement","re-engagement"
+    "advanced security module","cross-platform re-engagement","re-engagement",
+    // Reports (interactive/custom reporting UI — distinct from Dori's raw-data exports)
+    "custom report","pivot report",
+    // AI Assistant
+    "ai assistant"
   )) return "Elliot";
 
   // Dori
@@ -1335,7 +1339,21 @@ function getArticleOwnerByKeyword(title, url) {
     "meta ads cost","google ads integration","tiktok integration",
     "google icm","snap","conversions api for web","postback",
     "srn partner","cost import","cost api","keyword data",
-    "facebook","meta","tiktok","google","attribution","revenue"
+    "facebook","meta","tiktok","google","attribution","revenue",
+    // Video Clips
+    "video clip",
+    // Web S2S
+    "web s2s","server-to-server web",
+    // Purchase Connector
+    "purchase connector","in-app purchase","flutter purchase",
+    // Meta AEM
+    "meta aem","advanced event matching",
+    // Android Alternative Stores
+    "android alternative store","third party store","alternative app store",
+    // W2A / Web-to-App
+    "w2a","web-to-app",
+    // DCP Measurement (distinct from Ilana's DCP/audience-builder — check before generic "dcp" below)
+    "dcp measurement","on-site and off-site measurement","dcp live and historic dashboard"
   )) return "Dori";
 
   // Ilana
@@ -1353,6 +1371,8 @@ function getArticleOwnerByKeyword(title, url) {
     "incrementality - retarget","incrementality",
     // Smart Banners / Creative
     "smart banner","creative optimization","creative",
+    // ESP Integration
+    "esp integration","email service provider","insider esp","esp logo","email deep link",
     // Misc Ilana
     "campaign configuration"
   )) return "Ilana";

@@ -2839,9 +2839,9 @@ function appendLinkRow(r) {
   if (FIXED_ITEMS.has(fixKey)) return; // skip already-fixed rows
 
   const label = LINK_STATUS_LABELS[r.status] || r.status;
-  // Links pointing to the Dev Hub site (dev.appsflyer.com) are always Dori's,
-  // regardless of which article contains the link.
-  const owner = /dev\.appsflyer\.com/i.test(r.url || "") ? "Dori" : getArticleOwner(r.article_title, r.article_url);
+  // Priority: manual override (always wins) → Dev Hub link-target rule → normal keyword/author lookup.
+  const manualOwner = r.article_url && window._ownerOverrides && window._ownerOverrides[r.article_url];
+  const owner = manualOwner || (/dev\.appsflyer\.com/i.test(r.url || "") ? "Dori" : getArticleOwner(r.article_title, r.article_url));
 
   const tr = document.createElement("tr");
   tr.dataset.filter = r.status;

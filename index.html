@@ -490,6 +490,7 @@
 
     <div class="scan-controls">
       <button class="btn btn-primary" id="spellRunBtn" onclick="runFullScan()" title="Fetch all published English articles from the Help Center and run them through LanguageTool — takes 4–5 minutes for the full KB">▶ Scan Whole KB</button>
+      <button class="btn btn-light btn-sm" id="spellPauseBtn" onclick="pauseScan()" style="display:none" title="Pause after the current article — resume later from where it stopped">⏸ Pause</button>
       <button class="btn btn-light btn-sm" id="spellStopBtn" onclick="stopScan()" style="display:none" title="Stop the scan after the current article finishes — results so far are kept">■ Stop</button>
       <button class="btn btn-light btn-sm" id="loadCacheBtn" onclick="loadCachedScan()" style="display:none" title="Reload the results from your last completed scan — much faster than re-scanning">📂 Load Last Scan (<span id="cacheDateLabel"></span>)</button>
       <button class="btn btn-light btn-sm" id="refreshResultsBtn" onclick="refreshSpellResults()" style="display:none" title="Re-filter the current results against your updated dictionary — removes words you've added since the scan, no need to re-scan">↻ Refresh Results</button>
@@ -499,7 +500,7 @@
       <button class="btn btn-light btn-sm" id="teamLoadBtn" onclick="loadTeamScan()" style="display:none" title="Load the shared team scan from the GitHub repo — everyone sees the same results">🌐 Load Team Results</button>
       <button class="btn btn-light btn-sm" id="teamPublishBtn" onclick="publishTeamResults()" style="display:none" title="Publish current results to GitHub so all teammates see them — requires a GitHub PAT">📤 Publish to Team</button>
       <span id="teamSyncBadge" style="display:none;font-size:11px;padding:3px 8px;background:#f0fff4;color:#16a34a;border-radius:10px;border:1px solid #bbf7d0;"></span>
-      <span id="spellIdleNote" style="font-size:12px;color:#aaa">Scans all published articles — no setup needed.</span>
+      <span id="spellIdleNote" style="font-size:12px;color:#aaa">Scans all published articles (Help Center + Dev Hub) — no setup needed.</span>
     </div>
 
     <div class="progress-card" id="progressCard">
@@ -761,6 +762,61 @@ const GITHUB_API_BASE  = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_
 const GH_TOKEN_KEY     = "kbAuditorGHToken"; // localStorage key for PAT
 const ZENDESK_SEARCH   = "https://appsflyer.zendesk.com/api/v2/help_center/articles/search.json";
 
+// ── Dev Hub (dev.appsflyer.com/hc) source ────────────────────────────────────
+// Dev Hub runs on ReadMe.io and is source-controlled via ReadMe's GitHub sync.
+// Source-of-truth repo (public): github.com/AppsFlyerKnowledge/devhub
+// We scan GUIDES only: docs/guides/**/*.md (prose docs with slug frontmatter).
+// docs/apis/**/*.yaml (OpenAPI specs, no slug) are intentionally excluded here.
+// Fully client-side, no API key: git/trees to list, raw.githubusercontent for content.
+const DEVHUB_OWNER   = "AppsFlyerKnowledge";
+const DEVHUB_REPO    = "devhub";
+const DEVHUB_BRANCH  = "main"; // verify this is the repo's default branch
+const DEVHUB_TREE_URL = `https://api.github.com/repos/${DEVHUB_OWNER}/${DEVHUB_REPO}/git/trees/${DEVHUB_BRANCH}?recursive=1`;
+const DEVHUB_RAW_BASE = `https://raw.githubusercontent.com/${DEVHUB_OWNER}/${DEVHUB_REPO}/${DEVHUB_BRANCH}`;
+const DEVHUB_LIVE_BASE = "https://dev.appsflyer.com/hc/docs"; // + /<slug> (slug resolved in step 2)
+
+// List every guide markdown path in the Dev Hub repo (one API call).
+async function fetchDevHubGuidePaths() {
+  const res = await fetch(DEVHUB_TREE_URL);
+  if (!res.ok) throw new Error(`Dev Hub tree fetch failed: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  if (data.truncated) console.warn("Dev Hub tree was truncated by GitHub — some guides may be missing.");
+  return (data.tree || [])
+    .filter(n => n.type === "blob"
+              && n.path.startsWith("docs/guides/")
+              && n.path.toLowerCase().endsWith(".md"))
+    .map(n => n.path);
+}
+
+// Fetch raw markdown for the given paths, with limited concurrency so we don't
+// hammer raw.githubusercontent. Returns [{ path, rawText, source:"devhub" }].
+// Individual failures are logged and skipped (they don't abort the whole batch).
+async function fetchDevHubGuides(onProgress) {
+  const paths = await fetchDevHubGuidePaths();
+  const results = [];
+  const CONCURRENCY = 6;
+  let idx = 0, done = 0;
+  async function worker() {
+    while (idx < paths.length) {
+      const path = paths[idx++];
+      try {
+        const r = await fetch(`${DEVHUB_RAW_BASE}/${path}`);
+        if (r.ok) {
+          results.push({ path, rawText: await r.text(), source: "devhub" });
+        } else {
+          console.warn(`Dev Hub guide skipped (${r.status}): ${path}`);
+        }
+      } catch (e) {
+        console.warn(`Dev Hub guide error: ${path}`, e);
+      }
+      done++;
+      if (typeof onProgress === "function") onProgress(done, paths.length);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, paths.length) }, worker));
+  return results;
+}
+
 // Built-in words that are intentional in AppsFlyer docs — not spelling mistakes
 const BUILTIN_IGNORED = [
   // AppsFlyer products & terms
@@ -878,6 +934,8 @@ let IGNORED_WORDS = buildIgnoreSet();
 let currentMode      = "spell";
 let isRunning        = false;
 let stopFlag         = false;
+let pauseFlag        = false;   // set by Pause; loop saves progress and exits so it can resume
+let scanState        = null;    // { articles, index, checked, mistakeCount, errorCount } while paused
 let spellResults     = [];
 let spellCheckedCount = 0;   // articles checked so far (for summary restore)
 let kwResults        = [];
@@ -961,37 +1019,69 @@ function setMode(mode, tab) {
 // ═══════════════════════════════════════════════════════════════════════════
 async function runFullScan() {
   if (isRunning) return;
+  const resuming = !!scanState;
   isRunning = true;
   stopFlag  = false;
-  spellResults = [];
-  spellCheckedCount = 0;
+  pauseFlag = false;
 
   document.getElementById("spellRunBtn").disabled = true;
   document.getElementById("spellStopBtn").style.display = "inline-block";
+  document.getElementById("spellPauseBtn").style.display = "inline-block";
   document.getElementById("spellIdleNote").style.display = "none";
   document.getElementById("exportBtn").disabled = true;
   document.getElementById("progressCard").classList.add("visible");
-
-  resetResults();
-  setSpellHeaders();
   setLoading(true);
-  setProgress("Fetching article list…", 0, "", "");
+
+  let allArticles, startIndex, checked, mistakeCount, errorCount;
 
   try {
-    // ── Step 1: fetch all articles from Zendesk ──
-    setStatus("Fetching all articles from Zendesk Help Center…");
-    const allArticles = await fetchAllArticles();
-    if (stopFlag) return finishScan();
+    if (resuming) {
+      // ── Resume a paused scan from the saved position (no re-fetch) ──
+      allArticles  = scanState.articles;
+      startIndex   = scanState.index;
+      checked      = scanState.checked;
+      mistakeCount = scanState.mistakeCount;
+      errorCount   = scanState.errorCount;
+      setStatus(`Resuming at article ${startIndex + 1} of ${allArticles.length}…`);
+    } else {
+      spellResults = [];
+      spellCheckedCount = 0;
+      resetResults();
+      setSpellHeaders();
+      setProgress("Fetching article list…", 0, "", "");
+      // ── Step 1: fetch all articles from Zendesk ──
+      setStatus("Fetching all articles from Zendesk Help Center…");
+      allArticles = await fetchAllArticles();
+      if (stopFlag) return finishScan();
+
+      // ── Always append public Dev Hub guides (both sources scanned together) ──
+      setStatus("Fetching Dev Hub guides from GitHub…");
+      try {
+        const devhub = await fetchDevHubArticles((d, t) =>
+          setProgress(`Fetching Dev Hub guides… ${d}/${t}`, 0, "", ""));
+        allArticles.unshift(...devhub);  // scan Dev Hub FIRST so its rows appear early and are covered even if the scan is stopped
+        setStatus(`Added ${devhub.length} public Dev Hub guide${devhub.length !== 1 ? "s" : ""} to the scan pool.`);
+      } catch (e) {
+        console.warn("Dev Hub fetch failed:", e);
+        setStatus("Dev Hub fetch failed — continuing with Help Center articles only. " + e.message);
+      }
+      if (stopFlag) return finishScan();
+      startIndex = 0; checked = 0; mistakeCount = 0; errorCount = 0;
+    }
 
     const total = allArticles.length;
-    setStatus(`Found ${total} articles. Starting spell check via LanguageTool…`);
-
-    let checked = 0;
-    let mistakeCount = 0;
-    let errorCount = 0;
+    if (!resuming) setStatus(`Found ${total} articles. Starting spell check via LanguageTool…`);
 
     // ── Step 2: check each article with LanguageTool ──
-    for (let i = 0; i < total; i++) {
+    for (let i = startIndex; i < total; i++) {
+      // Pause: save progress and exit cleanly so the next run resumes from here
+      if (pauseFlag) {
+        scanState = { articles: allArticles, index: i, checked, mistakeCount, errorCount };
+        saveScanCache(spellResults, checked);
+        setProgress(`Paused — ${i} of ${total}`, Math.round((i / total) * 100), "", `${mistakeCount} mistake${mistakeCount !== 1 ? "s" : ""} found so far`);
+        setStatus(`Paused at article ${i} of ${total}. ${mistakeCount} issue${mistakeCount !== 1 ? "s" : ""} so far — click Resume to continue.`);
+        return finishScan(true);
+      }
       if (stopFlag) break;
 
       const article = allArticles[i];
@@ -1009,7 +1099,9 @@ async function runFullScan() {
       if (i > 0) await new Promise(r => setTimeout(r, LT_DELAY_MS));
       if (stopFlag) break;
 
-      const cleanBody = cleanArticleBody(article.body || "");
+      const cleanBody = article.source === "devhub"
+        ? cleanMarkdownBody(article.body || "")
+        : cleanArticleBody(article.body || "");
       const textToCheck = `${article.title || ""}\n\n${cleanBody}`;
 
       try {
@@ -1017,7 +1109,11 @@ async function runFullScan() {
           language: "en-US",
           text: textToCheck,
           enabledCategories: "TYPOS,REDUNDANCY,CONFUSED_WORDS,COMPOUNDING,TYPOGRAPHY",
-          enabledRules: "ENGLISH_WORD_REPEAT_RULE", // MISC category rule — scoped individually to avoid pulling in the rest of MISC
+          // NOTE: with enabledOnly:true, adding enabledRules narrows execution to ONLY those
+          // rules and silently ignores enabledCategories — which suppressed all spelling (TYPOS/
+          // MORFOLOGIK) matches (0 hits across 357 articles). Removed 2026-07-10 to restore spell
+          // check. The word-repeat rule is redundant anyway: the doubled-word filter below discards
+          // every adjacent-identical match. Verified via LT API: this config returns TYPOS matches.
           enabledOnly: "true"
         });
 
@@ -1039,10 +1135,34 @@ async function runFullScan() {
           // since those legitimately match multi-word phrases or short tokens.
           const ruleCategoryId = (match.rule && match.rule.category && match.rule.category.id) || "";
           const ruleId = (match.rule && match.rule.id) || "";
+          const issueType = (match.rule && match.rule.issueType) || "";
           const isTyposMatch = ruleCategoryId === "TYPOS";
+
+          // Skip whitespace-around-punctuation matches (rule COMMA_PARENTHESIS_WHITESPACE,
+          // issueType "whitespace"). On this corpus these are cleaning artifacts: stripping
+          // <code>/<pre> tags leaves stray spaces like "List ( file)" → LT flags the space
+          // after "(". Not real typos. Added 2026-07-11. Keeps the rest of TYPOGRAPHY.
+          if (issueType === "whitespace") continue;
 
           // Skip if in our combined ignore list
           if (IGNORED_WORDS.has(word.toLowerCase())) continue;
+          // Skip cross-block "repeated word" artifacts. Markdown blocks (headings,
+          // paragraphs, list items, API-reference type tokens) get joined with a space
+          // when cleaned, so the last word of one block and the identical first word of
+          // the next look like a repeat — e.g. heading "Plugins" + "Plugins are SDKs..."
+          // → "Plugins Plugins", or type tokens "NSString NSString", "void void",
+          // "Unzip Unzip", "data Data". None of these exist as real repeats on the page.
+          // On this technical corpus the doubled-word rule is almost pure noise, so we
+          // skip ALL adjacent identical-word pairs (case-insensitive). Note: this also
+          // means a genuine prose typo like "the the" won't be flagged.
+          // Re-enabled 2026-07-10: this filter is what kept the KB clean on both Zendesk
+          // and Dev Hub — it runs on every match regardless of source. Skip ALL adjacent
+          // identical-word pairs (case-insensitive). Tradeoff: a genuine "the the" won't flag.
+          {
+            const rep = word.split(/\s+/);
+            if (rep.length === 2 &&
+                rep[0].toLowerCase() === rep[1].toLowerCase()) continue;
+          }
           // Skip very short tokens — TYPOS only (TYPOGRAPHY/word-repeat can legitimately be short)
           if (isTyposMatch && word.length < 3) continue;
           // Skip multi-word phrases — these are almost always <wbr> tag artifacts
@@ -1095,7 +1215,8 @@ async function runFullScan() {
             ruleCategory: ruleCategoryId,
             context: match.context.text,
             article_title: article.title || "",
-            article_url: article.html_url || ""
+            article_url: article.html_url || "",
+            source: article.source === "devhub" ? "devhub" : "zendesk"
           };
           spellResults.push(mistake);
           appendSpellRow(mistake);
@@ -1117,6 +1238,7 @@ async function runFullScan() {
       }
     }
 
+    scanState = null; // scan ran to completion — nothing to resume
     const errorNote = errorCount > 0 ? ` (${errorCount} article${errorCount !== 1 ? "s" : ""} could not be checked)` : "";
     setProgress("Done", 100, "", "");
     setStatus(`Scan complete. Checked ${checked} articles, found ${mistakeCount} potential spelling issue${mistakeCount !== 1 ? "s" : ""}${errorNote}.`);
@@ -1134,16 +1256,26 @@ async function runFullScan() {
   finishScan();
 }
 
-function finishScan() {
+function finishScan(paused) {
   isRunning = false;
   stopFlag  = false;
+  pauseFlag = false;
   setLoading(false);
-  document.getElementById("spellRunBtn").disabled = false;
-  document.getElementById("spellStopBtn").style.display = "none";
-  document.getElementById("spellIdleNote").style.display = "inline";
+  const runBtn = document.getElementById("spellRunBtn");
+  runBtn.disabled = false;
+  runBtn.textContent = paused ? "▶ Resume scan" : "▶ Scan Whole KB";
+  document.getElementById("spellPauseBtn").style.display = "none";
+  document.getElementById("spellStopBtn").style.display = paused ? "inline-block" : "none";
+  document.getElementById("spellIdleNote").style.display = paused ? "none" : "inline";
   if (spellResults.length > 0) {
     document.getElementById("refreshResultsBtn").style.display = "inline-block";
   }
+}
+
+function pauseScan() {
+  if (!isRunning) return;
+  pauseFlag = true;
+  setStatus("Pausing after the current article…");
 }
 
 function refreshSpellResults() {
@@ -1179,6 +1311,13 @@ function refreshSpellResults() {
 
 function stopScan() {
   stopFlag = true;
+  if (!isRunning) {
+    // Scan is paused (loop not running) — discard the saved position; next run starts fresh
+    scanState = null;
+    finishScan(false);
+    setStatus("Scan stopped. The next run starts from the beginning.");
+    return;
+  }
   setStatus("Stopping after current batch…");
 }
 
@@ -1206,6 +1345,30 @@ async function fetchAllArticles() {
   } while (page <= pageCount);
 
   buildAuthorIdMap(articles);
+  return articles;
+}
+
+// Fetch public Dev Hub guides as article objects shaped like Zendesk articles,
+// so they flow through the same scan / skip / render logic. body holds the raw
+// markdown (cleaned via cleanMarkdownBody at scan time, branched on `source`).
+// Only guides with privacy: public and a slug are included.
+async function fetchDevHubArticles(onProgress) {
+  const guides = await fetchDevHubGuides(onProgress);
+  const articles = [];
+  for (const g of guides) {
+    const fm = parseDevHubFrontmatter(g.rawText);
+    if (!fm.isPublic) continue;   // Dev Hub equivalent of Zendesk published + public
+    if (!fm.slug)     continue;   // no slug → cannot build a live URL
+    articles.push({
+      title: fm.title || fm.slug,
+      body: g.rawText,
+      html_url: `${DEVHUB_LIVE_BASE}/${fm.slug}`,
+      source: "devhub",
+      draft: false,
+      user_segment_id: null,
+      _path: g.path
+    });
+  }
   return articles;
 }
 
@@ -1246,6 +1409,72 @@ function cleanArticleBody(html) {
   return text;
 }
 
+// ── Dev Hub markdown handling ────────────────────────────────────────────────
+// Parse the YAML frontmatter block at the top of a ReadMe guide .md file.
+// Verified fields (2026-07-10): slug, title, category, parent, privacy.
+// Returns { slug, title, privacy, isPublic }. Tolerant of `privacy: public`
+// and the nested `privacy:\n  view: public` shape.
+function parseDevHubFrontmatter(rawText) {
+  const m = rawText.match(/^---\s*\n([\s\S]*?)\n---/);
+  const out = { slug: "", title: "", privacy: "", isPublic: false };
+  if (!m) return out;
+  const block = m[1];
+  const grab = (key) => {
+    const r = block.match(new RegExp(`^${key}:[ \\t]*["']?(.+?)["']?\\s*$`, "m"));
+    return r ? r[1].trim() : "";
+  };
+  out.slug  = grab("slug");
+  out.title = grab("title");
+  // privacy may be scalar (`privacy: public`) or nested under `privacy:` as an indented `view: public`.
+  const viewNested = block.match(/^[ \t]+view:[ \t]*["']?(.+?)["']?\s*$/m);
+  out.privacy = grab("privacy") || (viewNested ? viewNested[1].trim() : "");
+  out.isPublic = /^public$/i.test(out.privacy);
+  return out;
+}
+
+// Strip markdown down to clean prose for spell checking (parallel to cleanArticleBody).
+// Removes frontmatter, fenced+inline code, ReadMe legacy [block:...] magic blocks and
+// MDX components (<Callout>/<Embed>/etc.), images, and converts [text](url) → text.
+function cleanMarkdownBody(rawText) {
+  let text = rawText
+    .replace(/^---\s*\n[\s\S]*?\n---\s*\n/, " ")   // YAML frontmatter
+    .replace(/```[\s\S]*?```/g, " ")               // fenced code blocks
+    .replace(/~~~[\s\S]*?~~~/g, " ")               // alt fenced code blocks
+    .replace(/\[block:[\s\S]*?\[\/block\]/gi, " ") // ReadMe legacy magic blocks
+    .replace(/<code[\s\S]*?<\/code>/gi, " ")       // HTML code blocks (API-ref signatures) — remove entirely, like Zendesk
+    .replace(/<pre[\s\S]*?<\/pre>/gi, " ")         // HTML pre blocks — remove entirely, like Zendesk
+    .replace(/<table[\s\S]*?<\/table>/gi, " ")     // HTML tables (API param/type tables) — remove entirely, like Zendesk
+    .replace(/<[A-Za-z][^>]*>/g, "\n\n")           // remaining opening MDX/HTML tags → block boundary
+    .replace(/<\/[A-Za-z][^>]*>/g, "\n\n")         // closing tags → block boundary
+    .replace(/`[^`]*`/g, " ")                      // inline code
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ");        // images ![alt](url)
+  // Links [text](url) → text  (keep the visible text, drop the URL)
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  // Reference-style link labels [text][ref] → text
+  text = text.replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1");
+  // Strip common markdown syntax marks (headings, emphasis, blockquote, list, table pipes)
+  text = text
+    .replace(/^#{1,6}\s+/gm, "")     // heading markers
+    .replace(/^\s{0,3}>\s?/gm, "")   // blockquote markers
+    .replace(/^\s*[-*+]\s+/gm, "")   // bullet list markers
+    .replace(/^\s*\d+\.\s+/gm, "")   // numbered list markers
+    .replace(/[*_~]{1,3}/g, "")      // bold/italic/strikethrough marks
+    .replace(/\|/g, " ")             // table pipes
+    .replace(/^[-:| ]+$/gm, " ");    // table separator rows
+  // Normalize whitespace but PRESERVE line breaks as blank lines (block boundaries),
+  // so a heading word + identical first word of the next block (e.g. "method" + heading
+  // "Method signature" → "method Method") isn't seen as an adjacent repeat. LanguageTool
+  // needs a blank line (\n\n), not a lone \n, to treat blocks as separate sentences.
+  text = text.replace(/[^\S\n]+/g, " ").replace(/\s*\n\s*/g, "\n\n").trim();
+  // Truncate to 8000 chars at a word boundary (same limit as cleanArticleBody)
+  if (text.length > 8000) {
+    text = text.slice(0, 8000);
+    const lastSpace = text.lastIndexOf(" ");
+    if (lastSpace > 7000) text = text.slice(0, lastSpace);
+  }
+  return text;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  OWNER LOOKUP — maps article title/url to team member
 //  Priority: manual override → keyword match → author ID (auto-discovered)
@@ -1275,6 +1504,8 @@ function getArticleOwner(title, url) {
   if (url && window._ownerOverrides && window._ownerOverrides[url]) {
     return window._ownerOverrides[url];
   }
+  // 1b. Dev Hub guides have no Zendesk author mapping — default owner is Dori.
+  if (url && /dev\.appsflyer\.com/i.test(url)) return "Dori";
   // 2. Real article author/editor, if it resolves to a current team member
   const editorId = window._articleEditorIdMap && window._articleEditorIdMap[url];
   if (editorId && window._authorIdToOwner && window._authorIdToOwner[editorId]) {
@@ -1494,10 +1725,18 @@ function markFixed(key, row) {
 // Spell table helpers
 function setSpellHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Article</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>AI</th><th>Owner</th><th>Action</th>`;
+    `<th>Article</th><th>Source</th><th>URL</th><th>Mistake</th><th>Correction</th><th>Context</th><th>AI</th><th>Owner</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display = "none";
   showOwnerFilterBar();
+}
+
+// Source badge — distinguishes Help Center (Zendesk) from Dev Hub. Cached rows
+// saved before this field existed have no m.source → default to Help Center.
+function sourceBadgeHtml(source) {
+  return source === "devhub"
+    ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;white-space:nowrap;">Dev Hub</span>`
+    : `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;white-space:nowrap;">Help Center</span>`;
 }
 
 function appendSpellRow(m) {
@@ -1530,6 +1769,7 @@ function appendSpellRow(m) {
   if (v === "false_positive" || v === "add_to_dict") tr.style.opacity = "0.6";
   tr.innerHTML = `
     <td class="art-title">${escHtml(m.article_title || "—")}</td>
+    <td>${sourceBadgeHtml(m.source)}</td>
     <td class="art-url"><a href="${escHtml(m.article_url || "#")}" target="_blank">↗ Open</a></td>
     <td><span class="misspelled"><span class="wrong">${escHtml(word)}</span></span></td>
     <td><span class="misspelled"><span class="right">${escHtml(m.correction || "")}</span></span></td>
@@ -1931,8 +2171,8 @@ function exportCSV() {
     headers = ["Risk","Title","URL","Matched Terms"];
     rows = kwResults.map(r => [r.risk, r.title, r.html_url, r.matched.join("; ")]);
   } else if (currentMode === "link") {
-    headers = ["Status","HTTP Code","Article Title","Article URL","Link Text","Link URL"];
-    rows = linkResults.map(r => [r.status, r.code || "", r.article_title, r.article_url, r.linkText || "", r.url]);
+    headers = ["Status","HTTP Code","Source","Article Title","Article URL","Link Text","Link URL"];
+    rows = linkResults.map(r => [r.status, r.code || "", r.source === "devhub" ? "Dev Hub" : "Help Center", r.article_title, r.article_url, r.linkText || "", r.url]);
   } else {
     headers = ["Title","URL"];
     rows = srchResults.map(r => [r.title, r.html_url]);
@@ -2461,6 +2701,44 @@ function extractLinks(html, articleUrl) {
   return results;
 }
 
+// ── Extract links from Dev Hub markdown (parallel to extractLinks) ──────────
+// Outputs the same { url, text } shape so results feed the existing checkLink pipeline.
+// Handles: [text](url), autolinks <url>, and ReadMe internal link syntax
+// (doc:slug → /hc/docs/slug, ref:slug → /hc/reference/slug). Relative links resolve
+// against the guide's own live Dev Hub URL.
+function extractMarkdownLinks(rawText, articleUrl) {
+  // Strip fenced/inline code first so we don't pick up example URLs inside code.
+  const body = rawText
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/~~~[\s\S]*?~~~/g, " ")
+    .replace(/`[^`]*`/g, " ");
+  const results = [];
+  const seen = new Set();
+  const push = (rawHref, text) => {
+    let href = (rawHref || "").trim();
+    if (!href) return;
+    if (/^(#|mailto:|tel:|javascript:|data:)/i.test(href)) return;
+    // ReadMe internal link syntax
+    if (/^doc:/i.test(href)) href = `${DEVHUB_LIVE_BASE}/${href.slice(4)}`;
+    else if (/^ref:/i.test(href)) href = `https://dev.appsflyer.com/hc/reference/${href.slice(4)}`;
+    let url;
+    try { url = new URL(href, articleUrl).href; } catch (e) { return; }
+    const normalized = url.split("#")[0].replace(/\/$/, "");
+    if (!normalized.startsWith("http")) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    results.push({ url: normalized, text: (text || "").trim().slice(0, 100) });
+  };
+  // [text](url "optional title")  — url stops at whitespace or )
+  const inline = /\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g;
+  let m;
+  while ((m = inline.exec(body)) !== null) push(m[2], m[1]);
+  // Autolinks <https://...>
+  const auto = /<((?:https?:)\/\/[^>\s]+)>/gi;
+  while ((m = auto.exec(body)) !== null) push(m[1], m[1]);
+  return results;
+}
+
 // ── Proxy engine ─────────────────────────────────────────────────────────────
 // Internal domains are always checked directly (CORS-safe, no proxy needed)
 const INTERNAL_RE = /\.(appsflyer|zendesk|aftest)\.(com|io)/i;
@@ -2684,18 +2962,35 @@ async function runLinkScan() {
     const allArticles = await fetchAllArticles();
     if (linkStopFlag) return finishLinkScan();
 
+    // ── Always append public Dev Hub guides (both sources scanned together) ──
+    setStatus("Fetching Dev Hub guides from GitHub…");
+    try {
+      const devhub = await fetchDevHubArticles((d, t) =>
+        setLinkProgress(`Fetching Dev Hub guides… ${d}/${t}`, 0, "", ""));
+      allArticles.unshift(...devhub);  // scan Dev Hub FIRST so its rows appear early
+      setStatus(`Added ${devhub.length} public Dev Hub guide${devhub.length !== 1 ? "s" : ""} to the scan pool.`);
+    } catch (e) {
+      console.warn("Dev Hub fetch failed:", e);
+      setStatus("Dev Hub fetch failed — continuing with Help Center articles only. " + e.message);
+    }
+    if (linkStopFlag) return finishLinkScan();
+
     // ── Step 2: extract and deduplicate all links ──
     setStatus("Extracting links from articles…");
     const urlMap = new Map(); // url → [{article_title, article_url, linkText}]
     for (const art of allArticles) {
       if (linkStopFlag) break;
       if (isArticleSkippable(art)) continue;
-      for (const { url, text } of extractLinks(art.body || "", art.html_url || "")) {
+      const links = art.source === "devhub"
+        ? extractMarkdownLinks(art.body || "", art.html_url || "")
+        : extractLinks(art.body || "", art.html_url || "");
+      for (const { url, text } of links) {
         if (!urlMap.has(url)) urlMap.set(url, []);
         urlMap.get(url).push({
           article_title: art.title || "",
           article_url:   art.html_url || "",
-          linkText:      text
+          linkText:      text,
+          source:        art.source || "zendesk"
         });
       }
     }
@@ -2783,7 +3078,7 @@ function stopLinkScan() {
 // ── Table helpers ────────────────────────────────────────────────────────────
 function setLinkHeaders() {
   document.getElementById("tableHead").innerHTML =
-    `<th>Status</th><th>Article</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Suggested Fix</th><th>Action</th>`;
+    `<th>Status</th><th>Article</th><th>Source</th><th>Owner</th><th>Link Text</th><th>URL</th><th>Code</th><th>Suggested Fix</th><th>Action</th>`;
   document.getElementById("resultsTable").style.display = "";
   document.getElementById("emptyState").style.display   = "none";
   showOwnerFilterBar();
@@ -2888,6 +3183,7 @@ function appendLinkRow(r) {
       <div class="art-title">${escHtml(r.article_title)}</div>
       <div class="art-url"><a href="${escHtml(r.article_url)}" target="_blank">Open ↗</a></div>
     </td>
+    <td>${sourceBadgeHtml(r.source)}</td>
     <td>${ownerBadgeHtml(owner, r.article_url)}</td>
     <td class="link-text-cell">${escHtml(r.linkText || "—")}</td>
     <td class="link-url-cell"><a href="${escHtml(r.url)}" target="_blank">${escHtml(r.url)}</a></td>
@@ -3058,6 +3354,15 @@ syncSharedDictionary(); // pull shared dictionary from Drive (no-op if not runni
 //  Everyone who opens the page gets the same results, dictionary, and verdicts.
 //  Admin (Bar) pushes updates via the GitHub API using a stored PAT.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Publishing scan results to the shared team file requires a GitHub write token,
+// which isn't wired up in this build — so this was previously undefined and threw
+// "publishTeamResults is not defined" after every scan (the auto-call below) and on
+// the hidden 📤 button. Defined here as a safe no-op so nothing throws. Team members
+// still READ shared results via initTeamSync / loadTeamScan; only the write side is off.
+function publishTeamResults(auto) {
+  if (!auto) setStatus("Team publish isn't set up in this build — your results are saved locally. Use Export JSON to share.");
+}
 
 async function initTeamSync() {
   // 1. Try to load the team dictionary first (small file, always apply)

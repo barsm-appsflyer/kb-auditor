@@ -1334,9 +1334,13 @@ async function fetchAllArticles() {
     const data = await resp.json();
     const batch = data.articles || [];
     articles  = articles.concat(batch);
-    // Build editor ID map: article html_url → updated_by_id
+    // Build owner/author/editor ID maps: article html_url → id
+    // author_id = Zendesk's real "Owner" field (shown in the article editor's Management panel)
+    // updated_by_id = last person who edited it (fallback only, not always present via public API)
+    if (!window._articleAuthorIdMap) window._articleAuthorIdMap = {};
     if (!window._articleEditorIdMap) window._articleEditorIdMap = {};
     for (const a of batch) {
+      if (a.html_url && a.author_id) window._articleAuthorIdMap[a.html_url] = a.author_id;
       if (a.html_url && a.updated_by_id) window._articleEditorIdMap[a.html_url] = a.updated_by_id;
     }
     pageCount = data.page_count || 1;
@@ -1504,14 +1508,28 @@ function getArticleOwner(title, url) {
   if (url && window._ownerOverrides && window._ownerOverrides[url]) {
     return window._ownerOverrides[url];
   }
-  // 1b. Dev Hub guides have no Zendesk author mapping — default owner is Dori.
+  // 1b. Dev Hub guides are always Dori's — no exceptions, regardless of any Zendesk field.
   if (url && /dev\.appsflyer\.com/i.test(url)) return "Dori";
-  // 2. Real article author/editor, if it resolves to a current team member
+
+  // 2. Owner — Zendesk's real "Owner" field (author_id), shown in the article
+  //    editor's Management panel. This is the authoritative source.
+  const ownerId = window._articleAuthorIdMap && window._articleAuthorIdMap[url];
+  if (ownerId && window._authorIdToOwner && window._authorIdToOwner[ownerId]) {
+    return window._authorIdToOwner[ownerId];
+  }
+
+  // 3. Author fallback — same field as #2 today (Zendesk only exposes author_id),
+  //    kept as its own step in case a future data source distinguishes them.
+  const authorId = window._articleAuthorIdMap && window._articleAuthorIdMap[url];
+  if (authorId && KNOWN_AUTHOR_IDS[authorId]) return KNOWN_AUTHOR_IDS[authorId];
+
+  // 4. Updated by — last editor (updated_by_id), only if #2/#3 didn't resolve
   const editorId = window._articleEditorIdMap && window._articleEditorIdMap[url];
   if (editorId && window._authorIdToOwner && window._authorIdToOwner[editorId]) {
     return window._authorIdToOwner[editorId];
   }
-  // 3. Keyword match against the KB ownership map
+
+  // 5. Keyword match against the KB ownership map — lowest-confidence fallback
   const kw = getArticleOwnerByKeyword(title, url);
   if (kw !== "—") return kw;
   return "—";

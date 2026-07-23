@@ -1503,6 +1503,30 @@ function buildAuthorIdMap(articles) {
   }
 }
 
+// _articleAuthorIdMap / _articleEditorIdMap (the real Zendesk Owner data) are only
+// populated as a side effect of fetchAllArticles() — which normally only runs during
+// a live "Scan Whole KB" pass. Loading a CACHED scan skips fetchAllArticles() entirely,
+// so owner lookups silently fall back to the weak keyword guess and show "—" even when
+// the real Zendesk Owner field is correct. Call this before rendering any cached/imported
+// results so owner badges resolve correctly without re-running a full spell-check scan.
+// Added 2026-07-23 after this exact bug was reported (Dori/Ilana/Elliot showing as
+// Unassigned on cached-load despite correct Zendesk Owner assignments).
+let _ownerDataFetchPromise = null;
+async function ensureOwnerData() {
+  if (window._articleAuthorIdMap && Object.keys(window._articleAuthorIdMap).length > 0) return;
+  if (_ownerDataFetchPromise) return _ownerDataFetchPromise;
+  _ownerDataFetchPromise = (async () => {
+    try {
+      setStatus("Fetching article ownership data from Zendesk…");
+      await fetchAllArticles();
+    } catch (e) {
+      console.warn("ensureOwnerData: could not fetch owner data —", e.message);
+    }
+  })();
+  await _ownerDataFetchPromise;
+  _ownerDataFetchPromise = null;
+}
+
 function getArticleOwner(title, url) {
   // 1. Manual override (user-assigned, shared across all users) — always wins
   if (url && window._ownerOverrides && window._ownerOverrides[url]) {
@@ -2361,7 +2385,7 @@ function updateCacheButton() {
   btn.style.display = "inline-block";
 }
 
-function loadCachedScan() {
+async function loadCachedScan() {
   try {
     // Prefer Firebase in-memory cache (synced in real-time)
     const cache = window._spellCache || (() => {
@@ -2376,6 +2400,10 @@ function loadCachedScan() {
     const all = cache.results || [];
     spellResults = all.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
     const removed = all.length - spellResults.length;
+
+    // Populate real Zendesk owner data before rendering (see ensureOwnerData comment) —
+    // cached results otherwise render owners from the weak keyword fallback only.
+    await ensureOwnerData();
 
     resetResults();
     setSpellHeaders();
@@ -2424,7 +2452,7 @@ function importResultsJSON(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const payload = JSON.parse(e.target.result);
       if (!payload.results || !Array.isArray(payload.results)) throw new Error("Invalid file format.");
@@ -2435,6 +2463,9 @@ function importResultsJSON(event) {
       IGNORED_WORDS = buildIgnoreSet();
       spellResults = payload.results.filter(m => !IGNORED_WORDS.has((m.word || "").toLowerCase()));
       const removed = payload.results.length - spellResults.length;
+
+      // Populate real Zendesk owner data before rendering (see ensureOwnerData comment)
+      await ensureOwnerData();
 
       resetResults();
       setSpellHeaders();
@@ -2624,12 +2655,15 @@ function importLinkJSON(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const payload = JSON.parse(e.target.result);
       if (!payload.results || !Array.isArray(payload.results)) throw new Error("Invalid file format.");
       linkResults = payload.results;
       linkCheckedCount = payload.checkedCount || linkResults.length;
+
+      // Populate real Zendesk owner data before rendering (see ensureOwnerData comment)
+      await ensureOwnerData();
 
       resetResults();
       unverifShown = true;
@@ -3307,7 +3341,7 @@ function saveLinkCache(results, checkedCount) {
   updateLinkCacheButton();
 }
 
-function loadCachedLinks() {
+async function loadCachedLinks() {
   try {
     // Prefer Firebase in-memory cache (synced in real-time)
     const cache = window._linkCache || (() => {
@@ -3318,6 +3352,8 @@ function loadCachedLinks() {
     linkResults      = (cache.results || []).filter(r => !isUrlTrusted(r.url));
     linkCheckedCount = cache.checked || linkResults.length;
     unverifShown = true;
+    // Populate real Zendesk owner data before rendering (see ensureOwnerData comment)
+    await ensureOwnerData();
     resetResults();
     setLinkHeaders();
     // Render all results including unverifiable (they may contain WIPs)
@@ -3440,6 +3476,9 @@ async function loadTeamScan() {
       const fixKey = `spell|${m.article_url}|${(m.word||"").toLowerCase()}`;
       return !FIXED_ITEMS.has(fixKey);
     });
+
+    // Populate real Zendesk owner data before rendering (see ensureOwnerData comment)
+    await ensureOwnerData();
 
     resetResults();
     setSpellHeaders();

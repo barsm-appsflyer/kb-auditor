@@ -52,11 +52,24 @@
           setTimeout(() => row.remove(), 300);
         }
       });
+      if (typeof renderOwnerCounts === 'function') renderOwnerCounts();
     }
     sbGet('fixed').then(applyFixedData);
     sb.channel('fixed-ch')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.fixed' },
         p => applyFixedData(p.new.value))
+      .subscribe();
+
+    // ── Owner baseline counts (per-owner mistake totals per tab, from the last scan) ──
+    window._ownerBaseline = {};
+    function applyBaselineData(data) {
+      window._ownerBaseline = data || {};
+      if (typeof renderOwnerCounts === 'function') renderOwnerCounts();
+    }
+    sbGet('baseline').then(applyBaselineData);
+    sb.channel('baseline-ch')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kv_store', filter: 'key=eq.baseline' },
+        p => applyBaselineData(p.new.value))
       .subscribe();
 
     // ── Owner overrides ───────────────────────────────────────────────────────
@@ -188,6 +201,10 @@
     function fbSaveFixed(set) {
       window._fixedSet = set;
       sbSet('fixed', { keys: [...set] }).catch(console.error);
+    }
+    function fbSaveBaseline(obj) {
+      window._ownerBaseline = obj;
+      sbSet('baseline', obj).catch(console.error);
     }
     function fbSaveOwnerOverride(articleUrl, ownerName) {
       window._ownerOverrides[articleUrl] = ownerName;
@@ -1246,6 +1263,7 @@ async function runFullScan() {
     renderSpellSummary(checked, mistakeCount, errorCount);
     setSpellCsvBtn(spellResults.length > 0);
     saveScanCache(spellResults, checked);
+    snapshotBaseline("spell", spellResults.map(m => ({ owner: getArticleOwner(m.article_title, m.article_url) })));
     showShareBtn();
     publishTeamResults(true); // auto-publish to GitHub after every scan
 
@@ -1674,6 +1692,7 @@ function filterByOwner(owner, btn) {
 function showOwnerFilterBar() {
   const bar = document.getElementById("ownerFilterBar");
   if (bar) bar.style.display = "flex";
+  renderOwnerCounts();
   // Auto-apply hash filter if present
   const hash = window.location.hash;
   const m = hash.match(/#owner=(.+)/);
@@ -1759,9 +1778,62 @@ let FIXED_ITEMS = loadFixedItems();
 function markFixed(key, row) {
   FIXED_ITEMS.add(key);
   saveFixedItems(FIXED_ITEMS);
+  if (row) row.dataset.fixed = "1";
   row.style.transition = "opacity 0.3s";
   row.style.opacity = "0";
-  setTimeout(() => { row.style.display = "none"; }, 300);
+  setTimeout(() => { row.style.display = "none"; renderOwnerCounts(); }, 300);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  OWNER BASELINE — snapshot per-owner mistake counts when a fresh scan
+//  finishes, then show "remaining/baseline" on the owner filter buttons.
+//  Baseline resets only on a new scan; "remaining" ticks down as rows get
+//  marked ✓ Fixed. Synced live to the whole team via the Supabase 'baseline'
+//  kv_store key (same real-time mechanism as fixed items / dictionary).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// tabKey: "spell" | "link". items: array of {owner} for every mistake found in that fresh scan.
+function snapshotBaseline(tabKey, items) {
+  const counts = { Dori: 0, Ilana: 0, Elliot: 0, "—": 0 };
+  items.forEach(it => {
+    const o = counts.hasOwnProperty(it.owner) ? it.owner : "—";
+    counts[o]++;
+  });
+  const baseline = Object.assign({}, window._ownerBaseline);
+  baseline[tabKey] = counts;
+  fbSaveBaseline(baseline); // pushes live to Supabase — whole team sees the new baseline
+  renderOwnerCounts();
+}
+
+// Counts rows still open (not marked fixed) for one owner in the currently rendered table.
+// Locally-fixed rows are marked via dataset.fixed (hidden, not removed, for the fade animation);
+// remotely-fixed rows (synced from teammates) are removed from the DOM entirely by applyFixedData.
+// Both cases are correctly excluded here either way.
+function countVisibleRowsForOwner(owner) {
+  let n = 0;
+  document.querySelectorAll("#resultsBody tr").forEach(tr => {
+    if (tr.dataset.fixed === "1") return;
+    const badge = tr.querySelector(".owner-badge");
+    const rowOwner = badge ? badge.textContent.trim().replace(/\s*▾$/, "") : "—";
+    if (rowOwner === owner) n++;
+  });
+  return n;
+}
+
+function renderOwnerCounts() {
+  const tabKey = currentMode === "link" ? "link" : currentMode === "spell" ? "spell" : null;
+  const baseline = tabKey ? ((window._ownerBaseline && window._ownerBaseline[tabKey]) || {}) : {};
+  document.querySelectorAll(".owner-filter-btn").forEach(btn => {
+    const owner = btn.dataset.owner;
+    const label = owner === "—" ? "Unassigned" : owner;
+    if (owner === "All" || !tabKey || baseline[owner] === undefined) {
+      btn.textContent = label;
+      return;
+    }
+    const total = baseline[owner];
+    const remaining = countVisibleRowsForOwner(owner);
+    btn.textContent = total > 0 ? `${label} (${remaining}/${total})` : label;
+  });
 }
 
 // Spell table helpers
@@ -3102,6 +3174,7 @@ async function runLinkScan() {
     renderLinkSummary(checked, broken, redirects, unverif, errs);
     setLinkCsvBtn(linkResults.length > 0);
     saveLinkCache(linkResults, checked);
+    snapshotBaseline("link", linkResults.map(r => ({ owner: getArticleOwner(r.article_title, r.article_url) })));
 
   } catch(e) {
     setStatus("Error: " + e.message);
